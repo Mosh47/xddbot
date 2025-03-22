@@ -39,7 +39,7 @@ class NpcapRequiredDialog(QDialog):
         message.setWordWrap(True)
         layout.addWidget(message)
         
-        # Download button
+        
         download_btn = QPushButton("Download Npcap")
         download_btn.setMinimumHeight(40)
         download_btn.clicked.connect(self.download_npcap)
