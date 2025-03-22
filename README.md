@@ -68,9 +68,9 @@ Each attempt sends 24 different packets (12 variations × 2 packet types), and t
 The tool checks for updates automatically when launched, so you'll always have access to the latest version.
 ## A Message From The Developer
 
-I'm not a professional coder - just a frustrated PoE player who spent days wrestling with this code to solve a problem that kept killing my characters.
+I'm not a professional coder or even an amateur - just a frustrated PoE player who spent days wrestling with this code(Ai carried me) to solve a problem I and multitudes of other hardcore players have cried about for years.
 
-I've lost hundreds of hours of progress and even quit entire leagues because of Lutbot's 6-second disconnect timer failing me in crucial moments. After enough deaths, I decided to build something better.
+Like many who dont live in the servers basement, I've lost hundreds of hours of progress and even quit entire leagues because of Lutbot's 6-second disconnect timer failing me in crucial moments even when I'm NOT lagging. After over 11k hours and advancement in AI i decided to try to do something about it.
 
 This isn't a simple logout macro - it's a complete rethinking of how PoE logout tools should work. The video demonstration shows the difference in action.
 
