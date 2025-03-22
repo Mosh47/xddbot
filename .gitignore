@@ -1,0 +1,63 @@
+# Ignore everything by default
+*
+
+# Allow Python source files
+!*.py
+
+# Allow specific configuration files
+!.gitattributes
+!.gitignore
+!README.md
+!poe_tools.spec
+
+# Allow specific folders
+!dist/
+dist/*
+!dist/xddbot.zip
+
+# Ensure .git directory remains ignored
+.git/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore build artifacts
+build/
+*.manifest
+*.spec
+!poe_tools.spec
+
+# Ignore environment files
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Ignore editor-specific files
+.vscode/
+.idea/
+*.swp
+*.swo 
+*.html
+*.html
+*.html
+*.txt
+*.toc
+*.pyz
+build/poe_tools/xref-poe_tools.html
+build/poe_tools/warn-poe_tools.txt
+build/poe_tools/PYZ-00.toc
+build/poe_tools/PYZ-00.pyz
+build/poe_tools/PoE Tools.pkg
+build/poe_tools/PKG-00.toc
+build/poe_tools/localpycs/struct.pyc
+build/poe_tools/localpycs/pyimod04_pywin32.pyc
+build/poe_tools/localpycs/pyimod03_ctypes.pyc
+build/poe_tools/localpycs/pyimod02_importers.pyc
+build/poe_tools/localpycs/pyimod01_archive.pyc
+build/poe_tools/EXE-00.toc
+build/poe_tools/base_library.zip
+build/poe_tools/Analysis-00.toc

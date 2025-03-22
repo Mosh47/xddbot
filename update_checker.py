@@ -52,19 +52,8 @@ def check_for_updates():
             
         # Check if the latest version is newer than current version
         if version.parse(latest_version) > version.parse(CURRENT_VERSION):
-            download_url = None
-            assets = latest_release.get('assets', [])
-            
-            # Find the .exe asset
-            for asset in assets:
-                if asset.get('name', '').endswith('.exe'):
-                    download_url = asset.get('browser_download_url')
-                    break
-            
-            if not download_url:
-                # If no exe is found, use the release page URL
-                download_url = latest_release.get('html_url')
-                
+            # For LFS files, we can construct the raw file URL based on version
+            download_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/raw/v{latest_version}/dist/xddbot.zip"
             return latest_version, download_url
                 
         return None, None  # No update needed
