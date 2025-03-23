@@ -8,13 +8,23 @@ import keyboard
 from scapy.all import IP, TCP, send, sniff, ARP, Ether, srp, conf, get_if_addr, get_if_hwaddr, sendp
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
+import os
+
+# Make sure we access the APP_DATA_DIR from update_checker
+try:
+    from update_checker import APP_DATA_DIR, ensure_app_data_dir
+    ensure_app_data_dir()
+    LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
+except ImportError:
+    # Fallback to local directory if import fails
+    LOG_FILE = "poe_logout.log"
 
 logging.basicConfig(
     level=logging.ERROR,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("poe_logout.log")
+        logging.FileHandler(LOG_FILE)
     ]
 )
 logger = logging.getLogger("PoELogout")
