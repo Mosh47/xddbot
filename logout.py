@@ -10,13 +10,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 import os
 
-# Make sure we access the APP_DATA_DIR from update_checker
 try:
     from update_checker import APP_DATA_DIR, ensure_app_data_dir
     ensure_app_data_dir()
     LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
 except ImportError:
-    # Fallback to local directory if import fails
     LOG_FILE = "poe_logout.log"
 
 logging.basicConfig(
@@ -279,25 +277,20 @@ class PoELogoutTool:
     
     def register_hotkey(self):
         try:
-            # First try to unregister any existing hotkeys to prevent conflicts
             try:
                 keyboard.unhook_all()
             except:
                 pass
                 
-            # Try adding the hotkey with multiple methods
             keyboard.add_hotkey(self.hotkey, self.perform_logout, suppress=False)
             
-            # Verify the hotkey was actually registered
             if not any(self.hotkey in k for k in keyboard._hotkeys.keys()):
-                # Try alternative approach if normal registration failed
                 keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
                 
             return True
         except Exception as e:
             print(f"Hotkey registration error: {str(e)}")
             
-            # Try a different approach with a direct hook
             try:
                 print(f"Trying alternative keyboard hook for {self.hotkey}...")
                 keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
@@ -412,7 +405,6 @@ class PoELogoutTool:
             
     def perform_logout(self):
         if self.is_active:
-            # Force reset if already active
             if time.time() - self.last_active_time > 8:
                 self.is_active = False
             else:
