@@ -1,591 +1,789 @@
-import threading
-import time
-import socket
-import sys
-import logging
-import psutil
-import keyboard
-from scapy.all import IP, TCP, send, sniff, ARP, Ether, srp, conf, get_if_addr, get_if_hwaddr, sendp
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
-import os
+import os, json, requests, re, tempfile, zipfile, subprocess, sys, time, threading
+import platform, shutil, hashlib, struct
+from packaging import version
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QProgressBar, QApplication
+from PyQt5.QtWidgets import QCheckBox, QHBoxLayout, QMessageBox
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+REPO_OWNER = "Mosh47"
+REPO_NAME = "xddbot"
+CURRENT_VERSION = "0.0.1"
+APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".xddbot")
+UPDATES_DIR = os.path.join(APP_DATA_DIR, "updates")
+BACKUP_DIR = os.path.join(APP_DATA_DIR, "backup")
+SETTINGS_FILE = os.path.join(APP_DATA_DIR, "update_settings.json")
+VERSION_FILE = os.path.join(APP_DATA_DIR, "installed_version.txt")
 
-try:
-    from update_checker import APP_DATA_DIR, ensure_app_data_dir
-    ensure_app_data_dir()
-    LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
-except ImportError:
+class DownloadThread(QThread):
+    progress_signal = pyqtSignal(int)
+    complete_signal = pyqtSignal(str)
+    error_signal = pyqtSignal(str)
     
-    LOG_FILE = "poe_logout.log"
-
-logging.basicConfig(
-    level=logging.ERROR,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_FILE)
-    ]
-)
-logger = logging.getLogger("PoELogout")
-
-THREAD_PRIORITY_HIGHEST = None
-if sys.platform == 'win32':
-    try:
-        import win32api
-        import win32process
-        import win32con
-        THREAD_PRIORITY_HIGHEST = win32process.THREAD_PRIORITY_HIGHEST
-    except ImportError:
-        pass
-
-@dataclass
-class Connection:
-    pid: int
-    local_ip: str
-    local_port: int
-    remote_ip: str
-    remote_port: int
-    interface: str = ""
+    def __init__(self, download_url, version):
+        super().__init__()
+        self.download_url = download_url
+        self.version = version
+        os.makedirs(UPDATES_DIR, exist_ok=True)
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        self.download_path = os.path.join(UPDATES_DIR, f"update_{version}.zip")
+        self.extract_path = os.path.join(UPDATES_DIR, version)
+        os.makedirs(self.extract_path, exist_ok=True)
     
-    @property
-    def id(self) -> str:
-        return f"{self.local_ip}:{self.local_port}->{self.remote_ip}:{self.remote_port}"
-    
-    def __hash__(self):
-        return hash(self.id)
-    
-    def __eq__(self, other):
-        if not isinstance(other, Connection):
-            return False
-        return self.id == other.id
-
-class SequenceTracker:
-    def __init__(self):
-        self._data: Dict[str, int] = {}
-        self._lock = threading.Lock()
-    
-    def update(self, conn_id: str, seq: int) -> None:
-        with self._lock:
-            self._data[conn_id] = seq
-    
-    def get(self, conn_id: str) -> Optional[int]:
-        with self._lock:
-            return self._data.get(conn_id)
-
-class ScapyPacketSender:
-    def __init__(self, num_threads=4):
-        self.sequence_offsets = [0, 0, 0, 0, 2, 2, 7, 7, 10, 10, 15, 15]
-        self.num_threads = num_threads
-    
-    def send_rst_packets(self, conn: Connection, seq_base: int) -> int:
-        sent_count = 0
-        thread_results = []
-        results_lock = threading.Lock()
-        
-        def send_packets_chunk(offsets):
-            local_sent = 0
+    def run(self):
+        try:
+            response = requests.get(self.download_url, stream=True)
+            response.raise_for_status()
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
             
-            try:
-                if THREAD_PRIORITY_HIGHEST:
-                    try:
-                        handle = win32api.OpenThread(win32con.THREAD_SET_INFORMATION, False, 
-                                                    threading.current_thread().ident)
-                        win32process.SetThreadPriority(handle, THREAD_PRIORITY_HIGHEST)
-                    except:
-                        pass
-                
-                for offset in offsets:
-                    try:
-                        seq = (seq_base + offset) % 0xFFFFFFFF
-                        
-                        rst_packet = IP(src=conn.local_ip, dst=conn.remote_ip)/TCP(
-                            sport=conn.local_port, 
-                            dport=conn.remote_port, 
-                            seq=seq, 
-                            flags="R"
-                        )
-                        
-                        rst_ack_packet = IP(src=conn.local_ip, dst=conn.remote_ip)/TCP(
-                            sport=conn.local_port, 
-                            dport=conn.remote_port, 
-                            seq=seq, 
-                            flags="RA"
-                        )
-                        
-                        send(rst_packet, verbose=0)
-                        send(rst_ack_packet, verbose=0)
-                        
-                        local_sent += 2
-                    except:
-                        pass
-                
-                with results_lock:
-                    thread_results.append(local_sent)
-            except:
-                pass
-        
-        chunks = self._split_offsets(self.sequence_offsets, self.num_threads)
-        threads = []
-        
-        for chunk in chunks:
-            thread = threading.Thread(target=send_packets_chunk, args=(chunk,))
-            thread.daemon = True
-            thread.start()
-            threads.append(thread)
-        
-        for thread in threads:
-            thread.join(0.5)
-        
-        for result in thread_results:
-            sent_count += result
-        
-        return sent_count
-    
-    def _split_offsets(self, offsets, num_chunks):
-        result = [[] for _ in range(num_chunks)]
-        for i, offset in enumerate(offsets):
-            result[i % num_chunks].append(offset)
-        return result
-
-class ConnectionMonitor:
-    def __init__(self, game_port: int, seq_tracker: SequenceTracker):
-        self.game_port = game_port
-        self.seq_tracker = seq_tracker
-        self.monitored_connections: Set[str] = set()
-        self.stop_event = threading.Event()
-        self.monitor_threads = {}
-    
-    def start(self):
-        self.scanner_thread = threading.Thread(target=self._scan_connections, daemon=True)
-        self.scanner_thread.start()
-    
-    def stop(self):
-        self.stop_event.set()
-        for thread in self.monitor_threads.values():
-            thread.join(0.5)
-    
-    def get_poe_connections(self) -> List[Connection]:
-        connections = []
-        for proc in psutil.process_iter(['name', 'pid']):
-            try:
-                if "PathOfExile" in proc.info['name']:
-                    for conn in proc.net_connections(kind='inet'):
-                        if conn.status == 'ESTABLISHED' and conn.laddr and conn.raddr:
-                            if conn.raddr.port == self.game_port:
-                                connections.append(Connection(
-                                    pid=proc.info['pid'],
-                                    local_ip=conn.laddr.ip,
-                                    local_port=conn.laddr.port,
-                                    remote_ip=conn.raddr.ip,
-                                    remote_port=conn.raddr.port,
-                                ))
-            except:
-                continue
-        
-        return connections
-    
-    def _scan_connections(self):
-        prev_connections = set()
-        
-        while not self.stop_event.is_set():
-            try:
-                current_connections = set()
-                for conn in self.get_poe_connections():
-                    current_connections.add(conn.id)
+            with open(self.download_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            self.progress_signal.emit(int((downloaded / total_size) * 100))
+            
+            for item in os.listdir(self.extract_path):
+                item_path = os.path.join(self.extract_path, item)
+                if os.path.isfile(item_path): os.unlink(item_path)
+                elif os.path.isdir(item_path): shutil.rmtree(item_path)
                     
-                    if conn.id not in self.monitored_connections:
-                        self.monitored_connections.add(conn.id)
-                        
-                        monitor_thread = threading.Thread(
-                            target=self._monitor_connection, 
-                            args=(conn,),
-                            daemon=True
-                        )
-                        self.monitor_threads[conn.id] = monitor_thread
-                        monitor_thread.start()
-                
-                closed_connections = prev_connections - current_connections
-                for conn_id in closed_connections:
-                    if conn_id in self.monitored_connections:
-                        self.monitored_connections.remove(conn_id)
-                        if conn_id in self.monitor_threads:
-                            del self.monitor_threads[conn_id]
-                
-                prev_connections = current_connections
-                time.sleep(1)
-            except:
-                time.sleep(1)
-    
-    def _monitor_connection(self, conn: Connection):
-        filter_str = f"host {conn.remote_ip} and port {conn.remote_port} and tcp"
-        
-        def packet_callback(pkt):
-            if TCP in pkt and IP in pkt:
-                if pkt[IP].src == conn.local_ip and pkt[TCP].sport == conn.local_port:
-                    seq = pkt[TCP].seq
-                    payload_len = len(pkt[TCP].payload)
-                    next_seq = seq + payload_len if payload_len > 0 else seq
-                    self.seq_tracker.update(conn.id, next_seq)
-        
-        try:
-            sniff(
-                filter=filter_str,
-                prn=packet_callback,
-                stop_filter=lambda _: self.stop_event.is_set(),
-                store=0
-            )
-        except:
-            pass
-
-class PoELogoutTool:
-    def __init__(self, hotkey='f9', game_port=6112, packet_threads=4):
-        self.hotkey = hotkey
-        self.game_port = game_port
-        self.is_active = False
-        self.running = True
-        self.active_attack = False
-        self.last_active_time = 0
-        
-        self.seq_tracker = SequenceTracker()
-        self.packet_sender = ScapyPacketSender(num_threads=packet_threads)
-        self.connection_monitor = ConnectionMonitor(game_port, self.seq_tracker)
-        
-        self.router_mac = None
-        self.router_ip = None
-        self.local_iface = None
-        self.use_layer2 = False
-    
-    def start(self):
-        try:
-            self._get_router_mac()
-            if self.router_mac:
-                self.use_layer2 = True
-        except:
-            pass
+            with zipfile.ZipFile(self.download_path, 'r') as zip_ref:
+                zip_ref.extractall(self.extract_path)
             
-        self.connection_monitor.start()
-        threading.Thread(target=self._state_watchdog, daemon=True).start()
-    
-    def _state_watchdog(self):
-        while self.running:
-            if self.is_active and time.time() - self.last_active_time > 10:
-                self.is_active = False
-            time.sleep(1)
-    
-    def stop(self):
-        self.running = False
-        self.connection_monitor.stop()
-    
-    def register_hotkey(self):
-        try:
-            try:
-                keyboard.unhook_all()
-            except:
-                pass
-                
-            keyboard.add_hotkey(self.hotkey, self.perform_logout, suppress=False)
-            
-            if not any(self.hotkey in k for k in keyboard._hotkeys.keys()):
-                keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
-                
-            return True
+            self.progress_signal.emit(100)
+            self.complete_signal.emit(self.extract_path)
         except Exception as e:
-            print(f"Hotkey registration error: {str(e)}")
-            
-            try:
-                print(f"Trying alternative keyboard hook for {self.hotkey}...")
-                keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
-                return True
-            except Exception as e2:
-                print(f"Alternative hook failed: {str(e2)}")
-                return False
+            self.error_signal.emit(f"Error during download: {str(e)}")
+
+class UpdateDialog(QDialog):
+    def __init__(self, latest_version, download_url, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Update Available")
+        self.setFixedSize(450, 350)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
+        self.download_url = download_url
+        self.latest_version = latest_version
+        self.setModal(True)
+        self.is_downloading = False
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        title_layout = QHBoxLayout()
+        title = QLabel(f"<h2>Update Available</h2>")
+        title.setTextFormat(Qt.RichText)
+        title_layout.addWidget(title)
+        layout.addLayout(title_layout)
+        
+        current_version = get_installed_version()
+        version_info = QLabel(f"<b>Current version:</b> {current_version}<br><b>New version:</b> {latest_version}")
+        version_info.setTextFormat(Qt.RichText)
+        layout.addWidget(version_info)
+        
+        self.status_label = QLabel("A new version is available with improvements and bug fixes.")
+        self.status_label.setAlignment(Qt.AlignLeft)
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setMinimumHeight(25)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+        
+        info = QLabel("<p><i>The application will close during update and restart automatically.</i></p>")
+        info.setTextFormat(Qt.RichText)
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        
+        self.auto_update_check = QCheckBox("Automatically download updates in the future")
+        layout.addWidget(self.auto_update_check)
+        
+        self.never_show_check = QCheckBox("Skip this version")
+        layout.addWidget(self.never_show_check)
+        
+        settings = load_update_settings()
+        self.auto_update_check.setChecked(settings.get("auto_download", False))
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        
+        self.remind_btn = QPushButton("Remind Me Later")
+        self.remind_btn.setMinimumHeight(40)
+        self.remind_btn.clicked.connect(self._on_remind_clicked)
+        btn_layout.addWidget(self.remind_btn)
+        
+        self.skip_btn = QPushButton("Skip This Update")
+        self.skip_btn.setMinimumHeight(40)
+        self.skip_btn.clicked.connect(self._on_skip_clicked)
+        btn_layout.addWidget(self.skip_btn)
+        
+        self.install_btn = QPushButton("Install Now")
+        self.install_btn.setMinimumHeight(40)
+        self.install_btn.setDefault(True)
+        self.install_btn.clicked.connect(self._on_install_clicked)
+        btn_layout.addWidget(self.install_btn)
+        
+        layout.addLayout(btn_layout)
     
-    def _get_router_mac(self):
-        if self.router_mac is not None:
-            return self.router_mac
-            
+    def _on_remind_clicked(self):
+        save_update_settings({"auto_download": self.auto_update_check.isChecked()})
+        self.reject()
+    
+    def _on_install_clicked(self):
+        save_update_settings({"auto_download": self.auto_update_check.isChecked(), "skip_version": ""})
+        self.start_update()
+        
+    def _on_skip_clicked(self):
+        if self.is_downloading and hasattr(self, 'downloader') and self.downloader is not None:
+            self.downloader.terminate()
+            self.downloader.wait()
+        
+        save_update_settings({"auto_download": self.auto_update_check.isChecked()})
+        if self.never_show_check.isChecked():
+            save_update_settings({"skip_version": self.latest_version})
+        self.reject()
+        
+    def start_update(self):
+        if self.is_downloading: return
+        
+        self.is_downloading = True
+        self.status_label.setText("Downloading update...")
+        self.progress_bar.show()
+        self.progress_bar.setValue(0)
+        self.install_btn.setEnabled(False)
+        self.skip_btn.setText("Cancel")
+        self.remind_btn.setEnabled(False)
+        self.never_show_check.setEnabled(False)
+        self.auto_update_check.setEnabled(False)
+        
+        parent = self.parent()
+        if parent and hasattr(parent, 'saveAllData'):
+            try: parent.saveAllData()
+            except: pass
+        
+        self.downloader = DownloadThread(self.download_url, self.latest_version)
+        self.downloader.progress_signal.connect(self.progress_bar.setValue)
+        self.downloader.complete_signal.connect(self.download_complete)
+        self.downloader.error_signal.connect(self.download_error)
+        self.downloader.start()
+    
+    def download_complete(self, extracted_path):
         try:
-            gateways = conf.route.routes
-            for gateway in gateways:
-                if gateway[2] != '0.0.0.0' and gateway[3] != '127.0.0.1':
-                    self.router_ip = gateway[2]
-                    self.local_iface = gateway[0]
-                    break
+            self.status_label.setText("Installing update...")
+            QApplication.processEvents()
+            time.sleep(0.5)
+            install_update(extracted_path, self.latest_version, self)
+        except Exception as e:
+            self.status_label.setText(f"Error during installation: {str(e)}")
+            self.skip_btn.setEnabled(True)
+            self.remind_btn.setEnabled(True)
+            self.install_btn.setEnabled(True)
+            self.skip_btn.setText("Close")
+            self.is_downloading = False
+            self.never_show_check.setEnabled(True)
+            self.auto_update_check.setEnabled(True)
+    
+    def download_error(self, error_message):
+        self.status_label.setText(f"Error: {error_message}")
+        self.skip_btn.setEnabled(True)
+        self.remind_btn.setEnabled(True)
+        self.install_btn.setEnabled(True)
+        self.skip_btn.setText("Close")
+        self.is_downloading = False
+        self.never_show_check.setEnabled(True)
+        self.auto_update_check.setEnabled(True)
+        
+    def closeEvent(self, event):
+        if self.is_downloading:
+            event.ignore()
+        else:
+            save_update_settings({
+                "auto_download": self.auto_update_check.isChecked(),
+                "skip_version": self.latest_version if self.never_show_check.isChecked() else ""
+            })
+            event.accept()
+
+def save_update_settings(settings):
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+    try:
+        existing = {}
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                try: existing = json.load(f)
+                except: pass
+        
+        existing.update(settings)
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(existing, f)
+        log_error(f"Saved settings: {existing}")
+    except Exception as e:
+        log_error(f"Error saving settings: {str(e)}")
+
+def load_update_settings():
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                data = json.load(f)
+                log_error(f"Loaded settings: {data}")
+                return data
+    except Exception as e:
+        log_error(f"Error loading settings: {str(e)}")
+    return {}
+
+def get_latest_release():
+    try:
+        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
+        headers = {'Accept': 'application/vnd.github.v3+json'}
+        response = requests.get(url, timeout=10, headers=headers)
+        
+        if response.status_code == 404:
+            all_releases_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases"
+            response = requests.get(all_releases_url, timeout=10, headers=headers)
             
-            if not self.router_ip:
+            if response.status_code == 200:
+                releases = response.json()
+                if releases: return releases[0]
                 return None
-            
-            arp_request = ARP(pdst=self.router_ip)
-            broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
-            packet = broadcast/arp_request
-            
-            result = srp(packet, timeout=1, verbose=0, retry=2, iface=self.local_iface)
-            if result and result[0]:
-                self.router_mac = result[0][0][1].hwsrc
-                return self.router_mac
-        except:
-            pass
+        elif response.status_code == 200:
+            return response.json()
         
-        return None
-        
-    def _is_port_open(self, ip, port, timeout=0.5):
-        try:
-            with socket.create_connection((ip, port), timeout):
-                return True
-        except:
-            return False
-            
-    def _send_layer2_packets(self):
-        if not self.router_mac:
-            return False
-            
-        try:
-            connections = self.connection_monitor.get_poe_connections()
-            if not connections:
-                return False
-                
-            target_connections = [conn for conn in connections if conn.remote_port == self.game_port]
-            if not target_connections:
-                return False
-                
-            for conn in target_connections:
-                sequence_changes = [0, 0, 0, 0, 2, 2, 7, 7, 10, 10, 15, 15]
-                
-                start_time = time.time()
-                attack_duration = 6.0
-                
-                while time.time() - start_time < attack_duration:
-                    seq = self.seq_tracker.get(conn.id)
-                    if not seq:
-                        seq = 0
-                    
-                    sent_count = 0
-                    
-                    for seq_change in sequence_changes:
-                        current_seq = (seq + seq_change) % 0xFFFFFFFF
-                        
-                        rst_packet = Ether(dst=self.router_mac) / IP(src=conn.local_ip, dst=conn.remote_ip) / TCP(
-                            sport=conn.local_port, 
-                            dport=conn.remote_port, 
-                            seq=current_seq, 
-                            flags="R",
-                            window=0
-                        )
-                        
-                        rst_ack_packet = Ether(dst=self.router_mac) / IP(src=conn.local_ip, dst=conn.remote_ip) / TCP(
-                            sport=conn.local_port, 
-                            dport=conn.remote_port, 
-                            seq=current_seq, 
-                            flags="RA",
-                            window=0
-                        )
-                        
-                        sendp(rst_packet, iface=self.local_iface, verbose=0)
-                        sendp(rst_ack_packet, iface=self.local_iface, verbose=0)
-                        
-                        sent_count += 2
-                    
-                    port_open = self._is_port_open(conn.remote_ip, conn.remote_port, timeout=0.3)
-                    if not port_open:
-                        self.is_active = False
-                        return True
-                        
-                    active_connections = self.connection_monitor.get_poe_connections()
-                    if not any(c.remote_port == self.game_port for c in active_connections):
-                        self.is_active = False
-                        return True
-                    
-                    time.sleep(0.03)
-                
-                self.is_active = False
-            
-            return True
-        except:
-            self.is_active = False
-            return False
-            
-    def perform_logout(self):
-        if self.is_active:
-            if time.time() - self.last_active_time > 8:
-                self.is_active = False
-            else:
-                return
-        
-        self.is_active = True
-        self.last_active_time = time.time()
-        
-        try:
-            if self.use_layer2:
-                self._send_layer2_packets()
-            else:
-                connections = self.connection_monitor.get_poe_connections()
-                
-                if not connections:
-                    self.is_active = False
-                    return
-                
-                target_connections = [conn for conn in connections if conn.remote_port == self.game_port]
-                
-                if not target_connections:
-                    self.is_active = False
-                    return
-                
-                for conn in target_connections:
-                    threading.Thread(
-                        target=self._attack_connection,
-                        args=(conn,),
-                        daemon=True
-                    ).start()
-                
-                threading.Thread(target=self._reset_active_state, daemon=True).start()
-            
-        except:
-            self.is_active = False
-    
-    def _attack_connection(self, conn: Connection):
-        self.active_attack = True
-        
-        seq = self.seq_tracker.get(conn.id)
-        if not seq:
-            seq = 0
-        
-        sent = self.packet_sender.send_rst_packets(conn, seq)
-        
-        if not self._is_port_open(conn.remote_ip, conn.remote_port):
-            self.active_attack = False
-            self.is_active = False
-            return
-        
-        new_seq = self.seq_tracker.get(conn.id)
-        if new_seq and new_seq != seq:
-            seq = new_seq
-        
-        self.packet_sender.send_rst_packets(conn, seq)
-        self.active_attack = False
-    
-    def _reset_active_state(self):
-        time.sleep(0.25)
-        self.is_active = False
-
-tool_instance = None
-
-def init_logout_tool(hotkey='f9', game_port=6112, packet_threads=4):
-    global tool_instance
-    try:
-        print("Initializing PoE Logout Tool...")
-        tool_instance = PoELogoutTool(hotkey, game_port, packet_threads)
-        tool_instance.start()
-        return True
+        response.raise_for_status()
     except Exception as e:
-        print(f"Failed to initialize tool: {e}")
-        return False
+        log_error(f"Failed to get release info: {str(e)}")
+    
+    return None
 
-def register_logout_hotkey():
-    global tool_instance
-    if not tool_instance:
-        print("Cannot register hotkey: Tool not initialized")
-        return False
+def get_executable_version():
     try:
-        print(f"Registering hotkey '{tool_instance.hotkey}'...")
-        result = tool_instance.register_hotkey()
-        if result:
-            print(f"Successfully registered hotkey '{tool_instance.hotkey}'")
-        return result
+        if platform.system() == 'Windows' and sys.executable.lower().endswith('.exe'):
+            try:
+                import win32api
+                info = win32api.GetFileVersionInfo(sys.executable, '\\')
+                ms = info['FileVersionMS']
+                ls = info['FileVersionLS']
+                executable_version = "%d.%d.%d" % (win32api.HIWORD(ms), win32api.LOWORD(ms), win32api.HIWORD(ls))
+                
+                if re.match(r'^\d+\.\d+\.\d+$', executable_version):
+                    log_error(f"Got version {executable_version} from executable metadata")
+                    return executable_version
+            except: pass
+
+        with open(sys.executable, 'rb') as f:
+            content = f.read()
+            matches = re.findall(b'CURRENT_VERSION\\s*=\\s*["\']([0-9]+\\.[0-9]+\\.[0-9]+)["\']', content)
+            if matches:
+                version_str = matches[0].decode('utf-8')
+                log_error(f"Found version {version_str} in executable binary")
+                return version_str
     except Exception as e:
-        print(f"Error registering hotkey: {e}")
-        return False
+        log_error(f"Error getting executable version: {str(e)}")
+    
+    return CURRENT_VERSION
 
-def perform_logout():
-    global tool_instance
-    if not tool_instance:
-        return False
+def get_installed_version():
     try:
-        tool_instance.perform_logout()
-        return True
-    except:
-        return False
+        actual_version = get_executable_version()
+        stored_version = None
+        if os.path.exists(VERSION_FILE):
+            with open(VERSION_FILE, 'r') as f:
+                stored_version = f.read().strip()
+                
+        if stored_version:
+            if version.parse(stored_version) > version.parse(actual_version):
+                log_error(f"WARNING: Stored version {stored_version} is newer than actual version {actual_version}. Resetting.")
+                with open(VERSION_FILE, 'w') as f:
+                    f.write(actual_version)
+                return actual_version
+            else:
+                return stored_version
+    except: pass
+    
+    return CURRENT_VERSION
 
-def get_connection_info():
-    global tool_instance
-    if not tool_instance:
-        return "Logout tool not initialized"
+def update_installed_version(new_version):
     try:
-        connections = tool_instance.connection_monitor.get_poe_connections()
-        if not connections:
-            return "No active PoE connection"
-        
-        conn_info = []
-        for conn in connections:
-            if conn.remote_port == tool_instance.game_port:
-                conn_info.append(conn.id)
-        
-        return ", ".join(conn_info) if conn_info else "No connections to PoE servers"
-    except:
-        return "Error retrieving connection info"
-
-def shutdown_logout_tool():
-    global tool_instance
-    if tool_instance:
-        tool_instance.stop()
-        tool_instance = None
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        with open(VERSION_FILE, 'w') as f:
+            f.write(new_version)
         return True
+    except: pass
     return False
 
-if __name__ == '__main__':
+def check_for_updates(force_check=False):
     try:
-        import argparse
-        
-        parser = argparse.ArgumentParser(description='Path of Exile Logout Tool')
-        parser.add_argument('--hotkey', type=str, default='f9', help='Custom hotkey to use')
-        parser.add_argument('--port', type=int, default=6112, help='PoE server port (default: 6112)')
-        parser.add_argument('--threads', type=int, default=4, help='Number of parallel threads for packet sending')
-        args = parser.parse_args()
-        
-        print("Starting PoE Logout Tool...")
-        if init_logout_tool(hotkey=args.hotkey, game_port=args.port, packet_threads=args.threads):
-            print(f"Tool initialized with port {args.port} and {args.threads} threads")
-            if register_logout_hotkey():
-                print(f"PoE Logout Tool started - Press {args.hotkey} to logout")
-            else:
-                print(f"WARNING: Hotkey registration failed. Starting without hotkey support.")
-                print(f"You can still use the tool by pressing Ctrl+C to exit when needed.")
-                
-                def manual_check():
-                    while True:
-                        try:
-                            if keyboard.is_pressed(args.hotkey):
-                                perform_logout()
-                                time.sleep(1) 
-                            time.sleep(0.1)
-                        except:
-                            time.sleep(0.5)
-                            
-                threading.Thread(target=manual_check, daemon=True).start()
+        latest_release = get_latest_release()
+        if not latest_release: return None, None
             
-            try:
-                print("Tool running. Press Ctrl+C to exit...")
-                while True:
-                    time.sleep(1)
-                    if not tool_instance or not tool_instance.running:
-                        print("Tool instance lost - reinitializing")
-                        init_logout_tool(hotkey=args.hotkey, game_port=args.port, packet_threads=args.threads)
-                        register_logout_hotkey()
-                    
-                    if hasattr(keyboard, '_hotkeys') and not any(args.hotkey in k for k in keyboard._hotkeys.keys()):
-                        print("Hotkey registration lost - reregistering")
-                        register_logout_hotkey()
-            except KeyboardInterrupt:
-                print("Shutting down...")
-            finally:
-                print("Cleaning up...")
-                shutdown_logout_tool()
-                print("Done!")
-        else:
-            print("Failed to initialize tool - exiting")
-            sys.exit(1)
+        latest_tag = latest_release.get('tag_name', '')
+        latest_version_match = re.search(r'v?(\d+\.\d+\.\d+)', latest_tag)
+        
+        if not latest_version_match: return None, None
+            
+        latest_version = latest_version_match.group(1)
+        installed_version = get_installed_version()
+        log_error(f"Current installed version: {installed_version}, Latest available: {latest_version}")
+        
+        settings = load_update_settings()
+        skip_version = settings.get("skip_version", "")
+        if not force_check and skip_version == latest_version:
+            log_error(f"Skipping version {latest_version} as requested by user")
+            return None, None
+            
+        if not force_check and not version.parse(latest_version) > version.parse(installed_version):
+            log_error(f"No update needed - {latest_version} <= {installed_version}")
+            return None, None
+        
+        if force_check:
+            log_error(f"Force checking for updates: {latest_version}")
+            
+        download_url = None
+        for asset in latest_release.get('assets', []):
+            if asset.get('name', '').endswith('.zip'):
+                download_url = asset.get('browser_download_url')
+                break
+        
+        if not download_url and latest_release.get('zipball_url'):
+            download_url = latest_release.get('zipball_url')
+        
+        if download_url:
+            log_error(f"Update available: {latest_version}")
+            if not force_check and settings.get("auto_download", False):
+                log_error("Auto-download enabled, downloading update in background")
+            return latest_version, download_url
+        
+        return None, None
     except Exception as e:
-        print(f"CRITICAL ERROR: {str(e)}")
-        with open("logout_critical_error.txt", "w") as f:
-            f.write(f"CRITICAL ERROR: {str(e)}\n")
-        sys.exit(1)
+        log_error(f"Error checking for updates: {str(e)}")
+        return None, None
+
+def check_write_permissions():
+    try:
+        current_exe = sys.executable
+        current_dir = os.path.dirname(current_exe)
+        test_file = os.path.join(current_dir, "update_test_write.tmp")
+        
+        with open(test_file, "w") as f:
+            f.write("test")
+            
+        os.unlink(test_file)
+        return True
+    except: return False
+
+def is_admin():
+    try:
+        if platform.system() == 'Windows':
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:
+            return os.geteuid() == 0
+    except: return False
+
+def request_admin_privileges(script_path):
+    try:
+        if platform.system() == 'Windows':
+            import ctypes
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, script_path, None, 0)
+            return True
+    except: pass
+    return False
+
+def clean_old_files():
+    try:
+        for file_type, pattern in [
+            ("zip", lambda f: f.endswith('.zip')),
+            ("dir", lambda d: os.path.isdir(os.path.join(UPDATES_DIR, d)) and not d.startswith('.')),
+            ("bat", lambda f: f.startswith('updater_') and f.endswith('.bat')),
+            ("vbs", lambda f: f.startswith('updater_') and f.endswith('.vbs')),
+            ("py", lambda f: f.startswith('admin_updater') and f.endswith('.py') 
+                           and (time.time() - os.path.getmtime(os.path.join(UPDATES_DIR, f)) > 3600))
+        ]:
+            items = [f for f in os.listdir(UPDATES_DIR) if pattern(f)]
+            if len(items) > 2:
+                items.sort(key=lambda i: os.path.getmtime(os.path.join(UPDATES_DIR, i)), reverse=True)
+                for old_item in items[2:]:
+                    path = os.path.join(UPDATES_DIR, old_item)
+                    if os.path.isdir(path): shutil.rmtree(path)
+                    else: os.unlink(path)
+    except: pass
+
+def log_error(message):
+    try:
+        os.makedirs(UPDATES_DIR, exist_ok=True)
+        with open(os.path.join(UPDATES_DIR, "update_error.log"), "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+            import traceback
+            traceback.print_exc(file=f)
+    except: pass
+
+def verify_executable(exe_path):
+    if not os.path.exists(exe_path) or os.path.getsize(exe_path) < 1024 * 1024:
+        return False
+    
+    if platform.system() == 'Windows':
+        try:
+            with open(exe_path, 'rb') as f:
+                return f.read(2) == b'MZ'
+        except: return False
+    else:
+        return os.access(exe_path, os.X_OK)
+
+def install_update(extracted_path, version_str, parent_dialog=None):
+    try:
+        clean_old_files()
+        update_installed_version(version_str)
+        log_error(f"Updating to version: {version_str}")
+        
+        current_exe = sys.executable
+        log_error(f"Current executable: {current_exe}")
+        
+        new_exe = None
+        for root, dirs, files in os.walk(extracted_path):
+            for file in files:
+                if file.endswith('.exe'):
+                    new_exe = os.path.join(root, file)
+                    break
+            if new_exe: break
+        
+        if not new_exe or not verify_executable(new_exe):
+            log_error(f"No valid executable found in {extracted_path}")
+            if parent_dialog:
+                parent_dialog.status_label.setText("Error: No valid update found")
+            return False
+            
+        log_error(f"New executable: {new_exe}")
+        log_error(f"New exe exists: {os.path.exists(new_exe)}, size: {os.path.getsize(new_exe)}")
+        
+        backup_exe = os.path.join(BACKUP_DIR, f"{os.path.basename(current_exe)}.backup")
+        os.makedirs(os.path.dirname(backup_exe), exist_ok=True)
+        try:
+            log_error(f"Creating backup at {backup_exe}")
+            shutil.copy2(current_exe, backup_exe)
+            log_error(f"Backup successful: {os.path.exists(backup_exe)}, size: {os.path.getsize(backup_exe)}")
+        except Exception as e:
+            log_error(f"Backup failed: {e}")
+        
+        need_admin = not check_write_permissions()
+        
+        if platform.system() == 'Windows':
+            timestamp = int(time.time())
+            
+            if need_admin:
+                updater_path = os.path.join(UPDATES_DIR, f"admin_updater_{timestamp}.py")
+                updater_type = "admin python"
+            else:
+                bat_path = os.path.join(UPDATES_DIR, f"updater_{timestamp}.bat")
+                updater_type = "batch file"
+                
+            current_size = os.path.getsize(current_exe) if os.path.exists(current_exe) else 0
+            new_size = os.path.getsize(new_exe) if os.path.exists(new_exe) else 0
+            log_error(f"Current exe size: {current_size}, New exe size: {new_size}")
+            
+            if parent_dialog and hasattr(parent_dialog.parent(), 'collectAppData'):
+                try:
+                    app_data = parent_dialog.parent().collectAppData()
+                    if app_data:
+                        save_path = os.path.join(UPDATES_DIR, f"appdata_backup_{timestamp}.json")
+                        log_error(f"Saving app data to {save_path}")
+                        with open(save_path, 'w') as f:
+                            json.dump(app_data, f)
+                except Exception as e:
+                    log_error(f"Failed to save app data: {e}")
+            
+            if not need_admin:
+                with open(bat_path, 'w') as f:
+                    f.write('@echo off\n')
+                    f.write('echo Updater batch file starting > "%TEMP%\\xddbot_update_bat.log"\n')
+                    f.write(f'taskkill /F /IM {os.path.basename(current_exe)} /T\n')
+                    f.write('timeout /t 5\n')
+                    f.write(f'attrib -R -H -S "{current_exe}"\n')
+                    f.write(f'del /F /Q "{current_exe}"\n')
+                    f.write(f'copy /Y /B "{new_exe}" "{current_exe}"\n')
+                    f.write('timeout /t 2\n')
+                    f.write(f'start "" "{current_exe}" --updated\n')
+                    f.write('exit\n')
+                updater_path = bat_path
+            
+            if need_admin:
+                with open(updater_path, 'w') as f:
+                    f.write(f"""import os, sys, subprocess, time, shutil, json
+
+try:
+    def log_error(msg):
+        with open(os.path.join("{UPDATES_DIR}", "admin_update_log.txt"), "a") as log:
+            log.write(f"{{time.strftime('%Y-%m-%d %H:%M:%S')}} - {{msg}}\\n")
+
+    log_error("Admin updater starting")
+    current_exe = "{current_exe}"
+    updater_exe = "{new_exe}"
+    process_name = "{os.path.basename(current_exe)}"
+    
+    log_error(f"Current EXE: {{current_exe}}")
+    log_error(f"Updater EXE: {{updater_exe}}")
+    
+    subprocess.call(['taskkill', '/F', '/IM', process_name, '/T'], 
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.call(['wmic', 'process', 'where', f'ExecutablePath="{current_exe}"', 'delete'],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+    time.sleep(5)
+    
+    if os.path.exists(updater_exe):
+        log_error(f"Updater file size: {{os.path.getsize(updater_exe)}}")
+        if os.path.exists(current_exe):
+            log_error(f"Current file size: {{os.path.getsize(current_exe)}}")
+        
+        backup_path = os.path.join("{BACKUP_DIR}", os.path.basename(current_exe) + ".backup")
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        try:
+            shutil.copy2(current_exe, backup_path)
+            log_error(f"Backup created: {{os.path.exists(backup_path)}}")
+        except Exception as backup_err:
+            log_error(f"Backup error: {{backup_err}}")
+            
+        try:
+            if os.path.exists(current_exe):
+                os.chmod(current_exe, 0o777)
+                temp_bak = current_exe + ".old"
+                if os.path.exists(temp_bak): os.unlink(temp_bak)
+                os.rename(current_exe, temp_bak)
+                shutil.copy2(updater_exe, current_exe)
+                try:
+                    if os.path.exists(temp_bak): os.unlink(temp_bak)
+                except: pass
+            else:
+                shutil.copy2(updater_exe, current_exe)
+        except Exception as copy_err:
+            log_error(f"Primary file replacement failed: {{copy_err}}")
+            try:
+                shutil.copy2(updater_exe, current_exe)
+            except Exception as fallback_err:
+                log_error(f"Fallback copy also failed: {{fallback_err}}")
+                try:
+                    subprocess.call(f'copy "{{updater_exe}}" "{{current_exe}}" /Y', shell=True)
+                except Exception as shell_err:
+                    log_error(f"Windows COPY also failed: {{shell_err}}")
+            
+        version_file = os.path.join("{APP_DATA_DIR}", "installed_version.txt")
+        try:
+            with open(version_file, 'w') as f:
+                f.write("{version_str}")
+        except Exception as ver_err:
+            log_error(f"Failed to write version file: {{ver_err}}")
+            
+        time.sleep(2)
+        
+        if os.path.exists(current_exe):
+            curr_size = os.path.getsize(current_exe)
+            log_error(f"Updated file exists, size: {{curr_size}}")
+            
+            if curr_size > 1000000:
+                import ctypes
+                ctypes.windll.shell32.ShellExecuteW(None, "open", current_exe, "--updated", None, 1)
+            else:
+                if os.path.exists(backup_path):
+                    shutil.copy2(backup_path, current_exe)
+                    time.sleep(1)
+                    import ctypes
+                    ctypes.windll.shell32.ShellExecuteW(None, "open", current_exe, "--update-failed", None, 1)
+        else:
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, current_exe)
+                time.sleep(1)
+                import ctypes
+                ctypes.windll.shell32.ShellExecuteW(None, "open", current_exe, "--update-failed", None, 1)
+except Exception as e:
+    with open(os.path.join("{UPDATES_DIR}", "admin_update_error.log"), "w") as log:
+        log.write(f"Error: {{e}}\\n")
+        import traceback
+        traceback.print_exc(file=log)
+""")
+            
+            if parent_dialog:
+                parent_dialog.status_label.setText("Installing update and restarting...")
+                QApplication.processEvents()
+            
+            log_error(f"Starting {updater_type} updater: {updater_path}")
+            try:
+                if need_admin:
+                    request_admin_privileges(updater_path)
+                else:
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0
+                    
+                    subprocess.Popen(
+                        ["cmd.exe", "/c", updater_path],
+                        startupinfo=startupinfo,
+                        shell=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.HIGH_PRIORITY_CLASS,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        close_fds=True
+                    )
+                
+                log_error("Exiting application to allow update...")
+                time.sleep(1)
+                if parent_dialog and hasattr(parent_dialog, 'parent') and parent_dialog.parent():
+                    parent = parent_dialog.parent()
+                    if hasattr(parent, 'close_application'):
+                        parent.close_application()
+                QApplication.quit()
+                os._exit(0)
+                return True
+            except Exception as e:
+                log_error(f"Error launching updater: {e}")
+                if parent_dialog:
+                    parent_dialog.status_label.setText(f"Error launching updater: {str(e)}")
+                    parent_dialog.skip_btn.setEnabled(True)
+                    parent_dialog.install_btn.setEnabled(True)
+                    parent_dialog.skip_btn.setText("Close")
+                    parent_dialog.is_downloading = False
+                return False
+        
+        return False
+    except Exception as e:
+        log_error(f"Update failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def show_update_dialog(parent=None, force_check=False):
+    try:
+        if not force_check:
+            settings = load_update_settings()
+            if "skip_version" in settings:
+                settings.pop("skip_version")
+                save_update_settings(settings)
+        
+        latest_version, download_url = check_for_updates(force_check=force_check)
+        
+        if latest_version and download_url:
+            dialog = UpdateDialog(latest_version, download_url, parent)
+            
+            if parent:
+                center = parent.geometry().center()
+                dialog_rect = dialog.frameGeometry()
+                dialog_rect.moveCenter(center)
+                dialog.move(dialog_rect.topLeft())
+            
+            return dialog.exec_()
+        elif force_check and parent:
+            QMessageBox.information(parent, "No Updates Available", 
+                                  f"You are running the latest version ({get_installed_version()}).")
+        
+        return False
+    except Exception as e:
+        log_error(f"Error showing update dialog: {str(e)}")
+        return False
+
+def reset_update_settings():
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            settings = load_update_settings()
+            if "skip_version" in settings:
+                settings.pop("skip_version")
+                save_update_settings(settings)
+            return True
+    except: pass
+    return False
+
+def test_vbs_generation():
+    try:
+        timestamp = int(time.time())
+        vbs_updater_path = os.path.join(os.getcwd(), f"test_updater_{timestamp}.vbs")
+        
+        current_exe = os.path.join("C:\\Program Files\\TestApp", "test.exe").replace('\\', '\\\\')
+        new_exe = os.path.join("C:\\Downloads\\TestApp", "test.exe").replace('\\', '\\\\')
+        backup_dir = os.path.join("C:\\Backups").replace('\\', '\\\\')
+        backup_exe = os.path.join(backup_dir, "test.exe.backup").replace('\\', '\\\\')
+        log_path = os.path.join("C:\\Temp", "update.log").replace('\\', '\\\\')
+        
+        with open(vbs_updater_path, 'w') as f:
+            f.write('On Error Resume Next\n')
+            f.write('Dim WshShell, fso, objFile\n')
+            f.write('Set WshShell = CreateObject("WScript.Shell")\n')
+            f.write('Set fso = CreateObject("Scripting.FileSystemObject")\n\n')
+            
+            f.write('Sub LogMessage(msg)\n')
+            f.write('    On Error Resume Next\n')
+            f.write(f'    Set objFile = fso.OpenTextFile("{log_path}", 8, True)\n')
+            f.write('    If Err.Number <> 0 Then\n')
+            f.write('        Err.Clear\n')
+            f.write('        Exit Sub\n')
+            f.write('    End If\n')
+            f.write('    objFile.WriteLine(Now & " - " & msg)\n')
+            f.write('    objFile.Close\n')
+            f.write('End Sub\n\n')
+            
+            f.write('LogMessage "Updater starting"\n')
+            f.write('LogMessage "Killing process: test.exe"\n')
+            f.write('WshShell.Run "taskkill /F /IM test.exe /T", 0, True\n')
+            f.write('WScript.Sleep 3000\n\n')
+            
+            f.write('LogMessage "Starting file replacement"\n')
+            f.write(f'If fso.FileExists("{current_exe}") Then\n')
+            
+            f.write(f'    If Not fso.FileExists("{backup_exe}") Then\n')
+            f.write('        LogMessage "Creating backup"\n')
+            f.write(f'        fso.CreateFolder "{backup_dir}"\n')
+            f.write(f'        fso.CopyFile "{current_exe}", "{backup_exe}", True\n')
+            f.write('    End If\n\n')
+            
+            f.write('    LogMessage "Setting file attributes to normal"\n')
+            f.write('    On Error Resume Next\n')
+            f.write(f'    WshShell.Run "attrib -R -H -S " & Chr(34) & "{current_exe}" & Chr(34), 0, True\n')
+            
+            f.write('    LogMessage "Force copying new file over existing one"\n')
+            f.write(f'    WshShell.Run "cmd.exe /c copy /Y /B " & Chr(34) & "{new_exe}" & Chr(34) & " " & Chr(34) & "{current_exe}" & Chr(34), 0, True\n')
+            f.write('    WScript.Sleep 2000\n')
+            
+            f.write('    LogMessage "Attempting direct deletion if needed"\n')
+            f.write('    On Error Resume Next\n')
+            f.write(f'    fso.DeleteFile "{current_exe}"\n')
+            f.write('    If Err.Number <> 0 Then\n')
+            f.write('        LogMessage "Direct deletion failed: " & Err.Description\n')
+            f.write('        Err.Clear\n')
+            
+            f.write('        LogMessage "Trying rename method"\n')
+            f.write(f'        fso.MoveFile "{current_exe}", "{current_exe}.old"\n')
+            f.write('        If Err.Number <> 0 Then\n')
+            f.write('            LogMessage "Rename failed: " & Err.Description\n')
+            f.write('            Err.Clear\n')
+            
+            f.write('            LogMessage "Using shell COPY command with Chr(34)"\n')
+            f.write(f'            WshShell.Run "cmd.exe /c copy /Y /B " & Chr(34) & "{new_exe}" & Chr(34) & " " & Chr(34) & "{current_exe}" & Chr(34), 0, True\n')
+            f.write('        Else\n')
+            f.write(f'            fso.CopyFile "{new_exe}", "{current_exe}", True\n')
+            f.write(f'            fso.DeleteFile "{current_exe}.old"\n')
+            f.write('        End If\n')
+            f.write('    Else\n')
+            f.write('        LogMessage "Direct deletion successful"\n')
+            f.write(f'        fso.CopyFile "{new_exe}", "{current_exe}", True\n')
+            f.write('    End If\n')
+            f.write('End If\n\n')
+            
+            f.write('WScript.Sleep 1000\n')
+            f.write('LogMessage "Verifying file copy"\n')
+            f.write(f'If fso.FileExists("{current_exe}") Then\n')
+            f.write('    LogMessage "File exists, launching application"\n')
+            f.write(f'    CreateObject("Shell.Application").ShellExecute "{current_exe}", "--updated", "", "open", 1\n')
+            f.write('Else\n')
+            f.write('    LogMessage "File not found, restoring from backup"\n')
+            f.write(f'    If fso.FileExists("{backup_exe}") Then\n')
+            f.write(f'        fso.CopyFile "{backup_exe}", "{current_exe}", True\n')
+            f.write(f'        CreateObject("Shell.Application").ShellExecute "{current_exe}", "--update-failed", "", "open", 1\n')
+            f.write('    End If\n')
+            f.write('End If\n')
+        
+        print(f"Test VBS file written to: {vbs_updater_path}")
+        return vbs_updater_path
+    except Exception as e:
+        print(f"Error generating test VBS: {e}")
+        return None
