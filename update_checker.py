@@ -1,388 +1,591 @@
-import os
-import json
-import requests
-import re
 import threading
 import time
-import shutil
-import subprocess
+import socket
 import sys
-import zipfile
-from packaging import version
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QProgressBar, QApplication
-from PyQt5.QtCore import Qt, QObject, pyqtSignal
+import logging
+import psutil
+import keyboard
+from scapy.all import IP, TCP, send, sniff, ARP, Ether, srp, conf, get_if_addr, get_if_hwaddr, sendp
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
+import os
 
-REPO_OWNER = "Mosh47"
-REPO_NAME = "xddbot"
-APP_DATA_DIR = os.path.join(os.path.expanduser('~'), '.xddbot')
-VERSION_FILE = os.path.join(APP_DATA_DIR, "version.json")
-DEFAULT_VERSION = "0.0.1"
-SETTINGS_FILE = os.path.join(APP_DATA_DIR, "poe_settings.json")
 
-def ensure_app_data_dir():
-    if not os.path.exists(APP_DATA_DIR):
-        os.makedirs(APP_DATA_DIR, exist_ok=True)
-
-def get_current_version():
-    if os.path.exists(VERSION_FILE):
-        try:
-            with open(VERSION_FILE, 'r') as f:
-                data = json.load(f)
-                return data.get("version", DEFAULT_VERSION)
-        except:
-            pass
-    return DEFAULT_VERSION
-
-def save_current_version(version_str):
+try:
+    from update_checker import APP_DATA_DIR, ensure_app_data_dir
     ensure_app_data_dir()
-    data = {"version": version_str, "skipped_versions": []}
-    if os.path.exists(VERSION_FILE):
-        try:
-            with open(VERSION_FILE, 'r') as f:
-                existing_data = json.load(f)
-                if "skipped_versions" in existing_data:
-                    data["skipped_versions"] = existing_data["skipped_versions"]
-        except:
-            pass
-            
-    with open(VERSION_FILE, 'w') as f:
-        json.dump(data, f)
-
-def add_skipped_version(version_str):
-    ensure_app_data_dir()
-    data = {"version": get_current_version(), "skipped_versions": [version_str]}
+    LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
+except ImportError:
     
-    if os.path.exists(VERSION_FILE):
-        try:
-            with open(VERSION_FILE, 'r') as f:
-                existing_data = json.load(f)
-                data["version"] = existing_data.get("version", DEFAULT_VERSION)
-                skipped = existing_data.get("skipped_versions", [])
-                if version_str not in skipped:
-                    skipped.append(version_str)
-                data["skipped_versions"] = skipped
-        except:
-            pass
-    
-    with open(VERSION_FILE, 'w') as f:
-        json.dump(data, f)
+    LOG_FILE = "poe_logout.log"
 
-def is_version_skipped(version_str):
-    if os.path.exists(VERSION_FILE):
-        try:
-            with open(VERSION_FILE, 'r') as f:
-                data = json.load(f)
-                skipped_versions = data.get("skipped_versions", [])
-                return version_str in skipped_versions
-        except:
-            pass
-    return False
-
-def get_latest_release():
-    try:
-        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        return None
-
-def extract_version_from_tag(tag_name):
-    if not tag_name:
-        return None
-    
-    match = re.search(r'v?(\d+\.\d+\.\d+)', tag_name)
-    if match:
-        return match.group(1)
-    
-    return tag_name
-
-def check_for_updates():
-    try:
-        latest_release = get_latest_release()
-        if not latest_release:
-            return None, None
-            
-        latest_tag = latest_release.get('tag_name')
-        latest_version = extract_version_from_tag(latest_tag)
-        
-        if not latest_version:
-            return None, None
-        
-        current_version = get_current_version()
-        
-        if is_version_skipped(latest_version):
-            return None, None
-            
-        if version.parse(latest_version) > version.parse(current_version):
-            for asset in latest_release.get('assets', []):
-                if asset.get('name', '').lower().endswith('.zip'):
-                    return latest_version, asset.get('browser_download_url')
-            
-            return latest_version, None
-                
-        return None, None
-    except:
-        return None, None
-
-def download_file(url, dest_path, progress_callback=None):
-    try:
-        response = requests.get(url, stream=True, timeout=60)
-        response.raise_for_status()
-        
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded = 0
-        
-        with open(dest_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_callback and total_size > 0:
-                        progress_callback(int(100 * downloaded / total_size))
-        
-        return True
-    except:
-        return False
-
-def extract_zip(zip_path, extract_dir):
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_dir)
-        return True
-    except:
-        return False
-
-def find_exe_in_dir(directory):
-    for root, dirs, files in os.walk(directory):
-        for file in files:
-            if file.lower().endswith('.exe'):
-                return os.path.join(root, file)
-    return None
-
-def create_update_script(current_exe, new_exe, extract_dir, zip_path):
-    ensure_app_data_dir()
-    batch_path = os.path.join(APP_DATA_DIR, "update.bat")
-    
-    with open(batch_path, 'w') as f:
-        f.write(f'''@echo off
-echo Updating xddbot...
-
-:: Kill all running instances
-echo Closing application...
-taskkill /F /IM xddbot.exe /T >nul 2>&1
-timeout /t 2 /nobreak >nul
-
-:: Update version file FIRST to prevent update loop
-echo Updating version information...
-echo {{{{"version": "999.999.999", "skipped_versions": []}}}} > "{VERSION_FILE}"
-
-:: Forcibly delete and replace EXE
-echo Replacing executable...
-del /F "{current_exe}" >nul 2>&1
-copy /Y "{new_exe}" "{current_exe}" >nul 2>&1
-
-:: Check if copy succeeded
-if exist "{current_exe}" (
-    echo Starting updated application...
-    start "" "{current_exe}"
-) else (
-    echo Copy failed! Starting from extract location instead...
-    start "" "{new_exe}"
+logging.basicConfig(
+    level=logging.ERROR,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE)
+    ]
 )
+logger = logging.getLogger("PoELogout")
 
-:: Clean up files
-echo Cleaning up...
-timeout /t 2 /nobreak >nul
-if exist "{zip_path}" del /F "{zip_path}" >nul 2>&1
+THREAD_PRIORITY_HIGHEST = None
+if sys.platform == 'win32':
+    try:
+        import win32api
+        import win32process
+        import win32con
+        THREAD_PRIORITY_HIGHEST = win32process.THREAD_PRIORITY_HIGHEST
+    except ImportError:
+        pass
 
-:: Self-delete this batch file
-(goto) 2>nul & del "%~f0"
-''')
+@dataclass
+class Connection:
+    pid: int
+    local_ip: str
+    local_port: int
+    remote_ip: str
+    remote_port: int
+    interface: str = ""
     
-    # Run the batch file directly instead of through Python
-    subprocess.Popen(
-        ["cmd.exe", "/c", "start", "/min", batch_path],
-        shell=True,
-        creationflags=subprocess.CREATE_NEW_CONSOLE
-    )
+    @property
+    def id(self) -> str:
+        return f"{self.local_ip}:{self.local_port}->{self.remote_ip}:{self.remote_port}"
     
-    # Return success - the batch file will handle everything else
-    return True
+    def __hash__(self):
+        return hash(self.id)
+    
+    def __eq__(self, other):
+        if not isinstance(other, Connection):
+            return False
+        return self.id == other.id
 
-class UpdateDialog(QDialog):
-    def __init__(self, latest_version, download_url, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Update Available")
-        self.setFixedWidth(400)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        
-        self.download_url = download_url
-        self.latest_version = latest_version
-        
-        layout = QVBoxLayout(self)
-        
-        message = QLabel(
-            f"<h3>A new version is available</h3>"
-            f"<p>Your version: {get_current_version()}</p>"
-            f"<p>Latest version: {latest_version}</p>"
-            f"<p>Would you like to install the update?</p>"
-        )
-        message.setTextFormat(Qt.RichText)
-        message.setWordWrap(True)
-        layout.addWidget(message)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-        
-        self.status_label = QLabel("")
-        self.status_label.setVisible(False)
-        layout.addWidget(self.status_label)
-        
-        button_layout = QVBoxLayout()
-        
-        self.install_btn = QPushButton("Install Update")
-        self.install_btn.setMinimumHeight(40)
-        self.install_btn.clicked.connect(self.download_update)
-        button_layout.addWidget(self.install_btn)
-        
-        self.skip_btn = QPushButton("Skip This Time")
-        self.skip_btn.clicked.connect(self.reject)
-        button_layout.addWidget(self.skip_btn)
-        
-        self.skip_always_btn = QPushButton("Skip and Don't Ask Again")
-        self.skip_always_btn.clicked.connect(self.skip_always)
-        button_layout.addWidget(self.skip_always_btn)
-        
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
+class SequenceTracker:
+    def __init__(self):
+        self._data: Dict[str, int] = {}
+        self._lock = threading.Lock()
     
-    def update_progress(self, value):
-        self.progress_bar.setValue(value)
-        QApplication.processEvents()
-        
-    def set_status(self, message):
-        self.status_label.setText(message)
-        self.status_label.setVisible(True)
-        QApplication.processEvents()
+    def update(self, conn_id: str, seq: int) -> None:
+        with self._lock:
+            self._data[conn_id] = seq
     
-    def download_update(self):
-        self.install_btn.setEnabled(False)
-        self.skip_btn.setEnabled(False)
-        self.skip_always_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
+    def get(self, conn_id: str) -> Optional[int]:
+        with self._lock:
+            return self._data.get(conn_id)
+
+class ScapyPacketSender:
+    def __init__(self, num_threads=4):
+        self.sequence_offsets = [0, 0, 0, 0, 2, 2, 7, 7, 10, 10, 15, 15]
+        self.num_threads = num_threads
+    
+    def send_rst_packets(self, conn: Connection, seq_base: int) -> int:
+        sent_count = 0
+        thread_results = []
+        results_lock = threading.Lock()
+        
+        def send_packets_chunk(offsets):
+            local_sent = 0
+            
+            try:
+                if THREAD_PRIORITY_HIGHEST:
+                    try:
+                        handle = win32api.OpenThread(win32con.THREAD_SET_INFORMATION, False, 
+                                                    threading.current_thread().ident)
+                        win32process.SetThreadPriority(handle, THREAD_PRIORITY_HIGHEST)
+                    except:
+                        pass
+                
+                for offset in offsets:
+                    try:
+                        seq = (seq_base + offset) % 0xFFFFFFFF
+                        
+                        rst_packet = IP(src=conn.local_ip, dst=conn.remote_ip)/TCP(
+                            sport=conn.local_port, 
+                            dport=conn.remote_port, 
+                            seq=seq, 
+                            flags="R"
+                        )
+                        
+                        rst_ack_packet = IP(src=conn.local_ip, dst=conn.remote_ip)/TCP(
+                            sport=conn.local_port, 
+                            dport=conn.remote_port, 
+                            seq=seq, 
+                            flags="RA"
+                        )
+                        
+                        send(rst_packet, verbose=0)
+                        send(rst_ack_packet, verbose=0)
+                        
+                        local_sent += 2
+                    except:
+                        pass
+                
+                with results_lock:
+                    thread_results.append(local_sent)
+            except:
+                pass
+        
+        chunks = self._split_offsets(self.sequence_offsets, self.num_threads)
+        threads = []
+        
+        for chunk in chunks:
+            thread = threading.Thread(target=send_packets_chunk, args=(chunk,))
+            thread.daemon = True
+            thread.start()
+            threads.append(thread)
+        
+        for thread in threads:
+            thread.join(0.5)
+        
+        for result in thread_results:
+            sent_count += result
+        
+        return sent_count
+    
+    def _split_offsets(self, offsets, num_chunks):
+        result = [[] for _ in range(num_chunks)]
+        for i, offset in enumerate(offsets):
+            result[i % num_chunks].append(offset)
+        return result
+
+class ConnectionMonitor:
+    def __init__(self, game_port: int, seq_tracker: SequenceTracker):
+        self.game_port = game_port
+        self.seq_tracker = seq_tracker
+        self.monitored_connections: Set[str] = set()
+        self.stop_event = threading.Event()
+        self.monitor_threads = {}
+    
+    def start(self):
+        self.scanner_thread = threading.Thread(target=self._scan_connections, daemon=True)
+        self.scanner_thread.start()
+    
+    def stop(self):
+        self.stop_event.set()
+        for thread in self.monitor_threads.values():
+            thread.join(0.5)
+    
+    def get_poe_connections(self) -> List[Connection]:
+        connections = []
+        for proc in psutil.process_iter(['name', 'pid']):
+            try:
+                if "PathOfExile" in proc.info['name']:
+                    for conn in proc.net_connections(kind='inet'):
+                        if conn.status == 'ESTABLISHED' and conn.laddr and conn.raddr:
+                            if conn.raddr.port == self.game_port:
+                                connections.append(Connection(
+                                    pid=proc.info['pid'],
+                                    local_ip=conn.laddr.ip,
+                                    local_port=conn.laddr.port,
+                                    remote_ip=conn.raddr.ip,
+                                    remote_port=conn.raddr.port,
+                                ))
+            except:
+                continue
+        
+        return connections
+    
+    def _scan_connections(self):
+        prev_connections = set()
+        
+        while not self.stop_event.is_set():
+            try:
+                current_connections = set()
+                for conn in self.get_poe_connections():
+                    current_connections.add(conn.id)
+                    
+                    if conn.id not in self.monitored_connections:
+                        self.monitored_connections.add(conn.id)
+                        
+                        monitor_thread = threading.Thread(
+                            target=self._monitor_connection, 
+                            args=(conn,),
+                            daemon=True
+                        )
+                        self.monitor_threads[conn.id] = monitor_thread
+                        monitor_thread.start()
+                
+                closed_connections = prev_connections - current_connections
+                for conn_id in closed_connections:
+                    if conn_id in self.monitored_connections:
+                        self.monitored_connections.remove(conn_id)
+                        if conn_id in self.monitor_threads:
+                            del self.monitor_threads[conn_id]
+                
+                prev_connections = current_connections
+                time.sleep(1)
+            except:
+                time.sleep(1)
+    
+    def _monitor_connection(self, conn: Connection):
+        filter_str = f"host {conn.remote_ip} and port {conn.remote_port} and tcp"
+        
+        def packet_callback(pkt):
+            if TCP in pkt and IP in pkt:
+                if pkt[IP].src == conn.local_ip and pkt[TCP].sport == conn.local_port:
+                    seq = pkt[TCP].seq
+                    payload_len = len(pkt[TCP].payload)
+                    next_seq = seq + payload_len if payload_len > 0 else seq
+                    self.seq_tracker.update(conn.id, next_seq)
         
         try:
-            current_exe = sys.executable
-            if not current_exe.endswith('.exe'):
-                self.set_status("Error: Not running from an executable")
-                return
-                
-            self.set_status("Downloading update...")
-            
-            ensure_app_data_dir()
-            app_dir = APP_DATA_DIR
-            zip_path = os.path.join(app_dir, "xddbot_update.zip")
-            extract_dir = os.path.join(app_dir, "update_extract")
-            
-            if os.path.exists(extract_dir):
-                shutil.rmtree(extract_dir, ignore_errors=True)
-            os.makedirs(extract_dir, exist_ok=True)
-            
-            if not download_file(self.download_url, zip_path, self.update_progress):
-                self.set_status("Failed to download update")
-                return
-                
-            self.set_status("Extracting update...")
-            if not extract_zip(zip_path, extract_dir):
-                self.set_status("Failed to extract update")
-                return
-            
-            self.set_status("Locating new executable...")
-            new_exe = find_exe_in_dir(extract_dir)
-            if not new_exe:
-                self.set_status("No executable found in update package")
-                return
-            
-            self.set_status("Starting update...")
-            update_script = create_update_script(current_exe, new_exe, extract_dir, zip_path)
-            
-            subprocess.Popen(
-                [sys.executable, update_script],
-                creationflags=subprocess.CREATE_NO_WINDOW
+            sniff(
+                filter=filter_str,
+                prn=packet_callback,
+                stop_filter=lambda _: self.stop_event.is_set(),
+                store=0
             )
+        except:
+            pass
+
+class PoELogoutTool:
+    def __init__(self, hotkey='f9', game_port=6112, packet_threads=4):
+        self.hotkey = hotkey
+        self.game_port = game_port
+        self.is_active = False
+        self.running = True
+        self.active_attack = False
+        self.last_active_time = 0
+        
+        self.seq_tracker = SequenceTracker()
+        self.packet_sender = ScapyPacketSender(num_threads=packet_threads)
+        self.connection_monitor = ConnectionMonitor(game_port, self.seq_tracker)
+        
+        self.router_mac = None
+        self.router_ip = None
+        self.local_iface = None
+        self.use_layer2 = False
+    
+    def start(self):
+        try:
+            self._get_router_mac()
+            if self.router_mac:
+                self.use_layer2 = True
+        except:
+            pass
             
-            QApplication.quit()
+        self.connection_monitor.start()
+        threading.Thread(target=self._state_watchdog, daemon=True).start()
+    
+    def _state_watchdog(self):
+        while self.running:
+            if self.is_active and time.time() - self.last_active_time > 10:
+                self.is_active = False
+            time.sleep(1)
+    
+    def stop(self):
+        self.running = False
+        self.connection_monitor.stop()
+    
+    def register_hotkey(self):
+        try:
+            try:
+                keyboard.unhook_all()
+            except:
+                pass
+                
+            keyboard.add_hotkey(self.hotkey, self.perform_logout, suppress=False)
             
+            if not any(self.hotkey in k for k in keyboard._hotkeys.keys()):
+                keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
+                
+            return True
         except Exception as e:
-            self.set_status(f"Error: {str(e)}")
-            self.install_btn.setEnabled(True)
-            self.skip_btn.setEnabled(True)
-            self.skip_always_btn.setEnabled(True)
+            print(f"Hotkey registration error: {str(e)}")
+            
+            try:
+                print(f"Trying alternative keyboard hook for {self.hotkey}...")
+                keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
+                return True
+            except Exception as e2:
+                print(f"Alternative hook failed: {str(e2)}")
+                return False
     
-    def skip_always(self):
-        add_skipped_version(self.latest_version)
-        self.reject()
-
-class UpdateSignalBridge(QObject):
-    update_available_signal = pyqtSignal(str, str)
-
-update_bridge = UpdateSignalBridge()
-
-def show_update_dialog(parent=None):
-    latest_version, download_url = check_for_updates()
+    def _get_router_mac(self):
+        if self.router_mac is not None:
+            return self.router_mac
+            
+        try:
+            gateways = conf.route.routes
+            for gateway in gateways:
+                if gateway[2] != '0.0.0.0' and gateway[3] != '127.0.0.1':
+                    self.router_ip = gateway[2]
+                    self.local_iface = gateway[0]
+                    break
+            
+            if not self.router_ip:
+                return None
+            
+            arp_request = ARP(pdst=self.router_ip)
+            broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
+            packet = broadcast/arp_request
+            
+            result = srp(packet, timeout=1, verbose=0, retry=2, iface=self.local_iface)
+            if result and result[0]:
+                self.router_mac = result[0][0][1].hwsrc
+                return self.router_mac
+        except:
+            pass
+        
+        return None
+        
+    def _is_port_open(self, ip, port, timeout=0.5):
+        try:
+            with socket.create_connection((ip, port), timeout):
+                return True
+        except:
+            return False
+            
+    def _send_layer2_packets(self):
+        if not self.router_mac:
+            return False
+            
+        try:
+            connections = self.connection_monitor.get_poe_connections()
+            if not connections:
+                return False
+                
+            target_connections = [conn for conn in connections if conn.remote_port == self.game_port]
+            if not target_connections:
+                return False
+                
+            for conn in target_connections:
+                sequence_changes = [0, 0, 0, 0, 2, 2, 7, 7, 10, 10, 15, 15]
+                
+                start_time = time.time()
+                attack_duration = 6.0
+                
+                while time.time() - start_time < attack_duration:
+                    seq = self.seq_tracker.get(conn.id)
+                    if not seq:
+                        seq = 0
+                    
+                    sent_count = 0
+                    
+                    for seq_change in sequence_changes:
+                        current_seq = (seq + seq_change) % 0xFFFFFFFF
+                        
+                        rst_packet = Ether(dst=self.router_mac) / IP(src=conn.local_ip, dst=conn.remote_ip) / TCP(
+                            sport=conn.local_port, 
+                            dport=conn.remote_port, 
+                            seq=current_seq, 
+                            flags="R",
+                            window=0
+                        )
+                        
+                        rst_ack_packet = Ether(dst=self.router_mac) / IP(src=conn.local_ip, dst=conn.remote_ip) / TCP(
+                            sport=conn.local_port, 
+                            dport=conn.remote_port, 
+                            seq=current_seq, 
+                            flags="RA",
+                            window=0
+                        )
+                        
+                        sendp(rst_packet, iface=self.local_iface, verbose=0)
+                        sendp(rst_ack_packet, iface=self.local_iface, verbose=0)
+                        
+                        sent_count += 2
+                    
+                    port_open = self._is_port_open(conn.remote_ip, conn.remote_port, timeout=0.3)
+                    if not port_open:
+                        self.is_active = False
+                        return True
+                        
+                    active_connections = self.connection_monitor.get_poe_connections()
+                    if not any(c.remote_port == self.game_port for c in active_connections):
+                        self.is_active = False
+                        return True
+                    
+                    time.sleep(0.03)
+                
+                self.is_active = False
+            
+            return True
+        except:
+            self.is_active = False
+            return False
+            
+    def perform_logout(self):
+        if self.is_active:
+            if time.time() - self.last_active_time > 8:
+                self.is_active = False
+            else:
+                return
+        
+        self.is_active = True
+        self.last_active_time = time.time()
+        
+        try:
+            if self.use_layer2:
+                self._send_layer2_packets()
+            else:
+                connections = self.connection_monitor.get_poe_connections()
+                
+                if not connections:
+                    self.is_active = False
+                    return
+                
+                target_connections = [conn for conn in connections if conn.remote_port == self.game_port]
+                
+                if not target_connections:
+                    self.is_active = False
+                    return
+                
+                for conn in target_connections:
+                    threading.Thread(
+                        target=self._attack_connection,
+                        args=(conn,),
+                        daemon=True
+                    ).start()
+                
+                threading.Thread(target=self._reset_active_state, daemon=True).start()
+            
+        except:
+            self.is_active = False
     
-    if latest_version and download_url:
-        dialog = UpdateDialog(latest_version, download_url, parent)
-        return dialog.exec_()
+    def _attack_connection(self, conn: Connection):
+        self.active_attack = True
+        
+        seq = self.seq_tracker.get(conn.id)
+        if not seq:
+            seq = 0
+        
+        sent = self.packet_sender.send_rst_packets(conn, seq)
+        
+        if not self._is_port_open(conn.remote_ip, conn.remote_port):
+            self.active_attack = False
+            self.is_active = False
+            return
+        
+        new_seq = self.seq_tracker.get(conn.id)
+        if new_seq and new_seq != seq:
+            seq = new_seq
+        
+        self.packet_sender.send_rst_packets(conn, seq)
+        self.active_attack = False
     
+    def _reset_active_state(self):
+        time.sleep(0.25)
+        self.is_active = False
+
+tool_instance = None
+
+def init_logout_tool(hotkey='f9', game_port=6112, packet_threads=4):
+    global tool_instance
+    try:
+        print("Initializing PoE Logout Tool...")
+        tool_instance = PoELogoutTool(hotkey, game_port, packet_threads)
+        tool_instance.start()
+        return True
+    except Exception as e:
+        print(f"Failed to initialize tool: {e}")
+        return False
+
+def register_logout_hotkey():
+    global tool_instance
+    if not tool_instance:
+        print("Cannot register hotkey: Tool not initialized")
+        return False
+    try:
+        print(f"Registering hotkey '{tool_instance.hotkey}'...")
+        result = tool_instance.register_hotkey()
+        if result:
+            print(f"Successfully registered hotkey '{tool_instance.hotkey}'")
+        return result
+    except Exception as e:
+        print(f"Error registering hotkey: {e}")
+        return False
+
+def perform_logout():
+    global tool_instance
+    if not tool_instance:
+        return False
+    try:
+        tool_instance.perform_logout()
+        return True
+    except:
+        return False
+
+def get_connection_info():
+    global tool_instance
+    if not tool_instance:
+        return "Logout tool not initialized"
+    try:
+        connections = tool_instance.connection_monitor.get_poe_connections()
+        if not connections:
+            return "No active PoE connection"
+        
+        conn_info = []
+        for conn in connections:
+            if conn.remote_port == tool_instance.game_port:
+                conn_info.append(conn.id)
+        
+        return ", ".join(conn_info) if conn_info else "No connections to PoE servers"
+    except:
+        return "Error retrieving connection info"
+
+def shutdown_logout_tool():
+    global tool_instance
+    if tool_instance:
+        tool_instance.stop()
+        tool_instance = None
+        return True
     return False
 
-def _update_check_thread(tray_icon):
+if __name__ == '__main__':
     try:
-        time.sleep(3.0)
-        latest_version, download_url = check_for_updates()
+        import argparse
         
-        if latest_version and download_url:
-            update_bridge.update_available_signal.emit(latest_version, download_url)
-    except:
-        pass
-
-def handle_update_available(latest_version, download_url):
-    try:
-        dialog = UpdateDialog(latest_version, download_url)
-        dialog.exec_()
-    except:
-        pass
-
-def start_update_checker(tray_icon):
-    update_bridge.update_available_signal.connect(handle_update_available)
-    update_thread = threading.Thread(target=_update_check_thread, args=(tray_icon,), daemon=True)
-    update_thread.start()
-
-def check_for_update_at_startup():
-    """
-    Checks for updates at application startup.
-    Returns:
-        0 if should continue (no update or update skipped)
-        1 if updated and should exit
-    """
-    latest_version, download_url = check_for_updates()
-    
-    if latest_version and download_url:
-        app = QApplication.instance()
-        if not app:
-            app = QApplication(sys.argv)
+        parser = argparse.ArgumentParser(description='Path of Exile Logout Tool')
+        parser.add_argument('--hotkey', type=str, default='f9', help='Custom hotkey to use')
+        parser.add_argument('--port', type=int, default=6112, help='PoE server port (default: 6112)')
+        parser.add_argument('--threads', type=int, default=4, help='Number of parallel threads for packet sending')
+        args = parser.parse_args()
         
-        dialog = UpdateDialog(latest_version, download_url)
-        result = dialog.exec_()
-        
-        if result == QDialog.Accepted:  # User clicked "Install Update"
-            return 1  # Signal that app should exit (update is installing)
-    
-    return 0  # Continue with app startup
-
-ensure_app_data_dir()
-if not os.path.exists(VERSION_FILE):
-    save_current_version(DEFAULT_VERSION)
+        print("Starting PoE Logout Tool...")
+        if init_logout_tool(hotkey=args.hotkey, game_port=args.port, packet_threads=args.threads):
+            print(f"Tool initialized with port {args.port} and {args.threads} threads")
+            if register_logout_hotkey():
+                print(f"PoE Logout Tool started - Press {args.hotkey} to logout")
+            else:
+                print(f"WARNING: Hotkey registration failed. Starting without hotkey support.")
+                print(f"You can still use the tool by pressing Ctrl+C to exit when needed.")
+                
+                def manual_check():
+                    while True:
+                        try:
+                            if keyboard.is_pressed(args.hotkey):
+                                perform_logout()
+                                time.sleep(1) 
+                            time.sleep(0.1)
+                        except:
+                            time.sleep(0.5)
+                            
+                threading.Thread(target=manual_check, daemon=True).start()
+            
+            try:
+                print("Tool running. Press Ctrl+C to exit...")
+                while True:
+                    time.sleep(1)
+                    if not tool_instance or not tool_instance.running:
+                        print("Tool instance lost - reinitializing")
+                        init_logout_tool(hotkey=args.hotkey, game_port=args.port, packet_threads=args.threads)
+                        register_logout_hotkey()
+                    
+                    if hasattr(keyboard, '_hotkeys') and not any(args.hotkey in k for k in keyboard._hotkeys.keys()):
+                        print("Hotkey registration lost - reregistering")
+                        register_logout_hotkey()
+            except KeyboardInterrupt:
+                print("Shutting down...")
+            finally:
+                print("Cleaning up...")
+                shutdown_logout_tool()
+                print("Done!")
+        else:
+            print("Failed to initialize tool - exiting")
+            sys.exit(1)
+    except Exception as e:
+        print(f"CRITICAL ERROR: {str(e)}")
+        with open("logout_critical_error.txt", "w") as f:
+            f.write(f"CRITICAL ERROR: {str(e)}\n")
+        sys.exit(1)
