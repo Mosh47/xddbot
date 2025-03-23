@@ -436,11 +436,10 @@ class CommandHotkeys(QWidget):
                 with open(settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     self.settings.update(loaded_settings)
-            elif os.path.exists('poe_settings.json'):  # For backward compatibility
+            elif os.path.exists('poe_settings.json'):
                 with open('poe_settings.json', 'r') as f:
                     loaded_settings = json.load(f)
                     self.settings.update(loaded_settings)
-                    # Save to new location
                     self.save_settings()
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -610,7 +609,7 @@ def check_single_instance():
     mutex_name = "Global\\XDDBotSingleInstance"
     try:
         mutex = ctypes.windll.kernel32.CreateMutexW(None, 1, mutex_name)
-        if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+        if ctypes.windll.kernel32.GetLastError() == 183:
             return False
         return True
     except:
