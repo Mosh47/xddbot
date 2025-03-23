@@ -12,7 +12,7 @@ REPO_OWNER = "Mosh47"
 REPO_NAME = "xddbot"
 
 # Current version - modify this when releasing updates
-CURRENT_VERSION = "1.0.0"
+CURRENT_VERSION = "0.0.1"
 
 def get_latest_release():
     """Fetch the latest release information from GitHub"""
@@ -52,8 +52,14 @@ def check_for_updates():
             
         # Check if the latest version is newer than current version
         if version.parse(latest_version) > version.parse(CURRENT_VERSION):
-            # For LFS files, we can construct the raw file URL based on version
-            download_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/raw/v{latest_version}/dist/xddbot.zip"
+            # Construct direct download URL to the zip file in the repository
+            # This uses the raw.githubusercontent.com URL format for the main branch
+            download_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/raw/main/dist/xddbot.zip"
+            
+            # Alternative: if you're using versioned zips with different names per version
+            # You can use tag-based URL: (uncomment if needed)
+            # download_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/raw/{latest_tag}/dist/xddbot.zip"
+            
             return latest_version, download_url
                 
         return None, None  # No update needed
@@ -78,6 +84,7 @@ class UpdateAvailableDialog(QDialog):
             f"<p>Your version: {CURRENT_VERSION}</p>"
             f"<p>Latest version: {latest_version}</p>"
             f"<p>Would you like to download the update?</p>"
+            f"<p><small>Note: The download will be a ZIP file. Extract the executable after downloading.</small></p>"
         )
         message.setTextFormat(Qt.RichText)
         message.setWordWrap(True)
