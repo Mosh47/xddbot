@@ -61,3 +61,6 @@ build/poe_tools/localpycs/pyimod01_archive.pyc
 build/poe_tools/EXE-00.toc
 build/poe_tools/base_library.zip
 build/poe_tools/Analysis-00.toc
+dist/poe_settings.json
+dist/poe_logout.log
+dist/PoE Tools.exe
