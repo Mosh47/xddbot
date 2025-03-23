@@ -237,9 +237,6 @@ class CommandHotkeys(QWidget):
         self.connection_timer = QTimer()
         self.connection_timer.timeout.connect(self.update_connection_display)
         self.connection_timer.start(2000)
-        
-        # Check for updates after a delay to ensure UI is fully loaded
-        QTimer.singleShot(3000, self.check_for_updates)
 
     def init_ui(self):
         self.setWindowTitle('PoE Command Hotkeys')
@@ -434,16 +431,25 @@ class CommandHotkeys(QWidget):
     
     def load_settings(self):
         try:
-            if os.path.exists('poe_settings.json'):
+            settings_file = os.path.join(update_checker.APP_DATA_DIR, 'poe_settings.json')
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    self.settings.update(loaded_settings)
+            elif os.path.exists('poe_settings.json'):  # For backward compatibility
                 with open('poe_settings.json', 'r') as f:
                     loaded_settings = json.load(f)
                     self.settings.update(loaded_settings)
+                    # Save to new location
+                    self.save_settings()
         except Exception as e:
             print(f"Error loading settings: {e}")
-    
+
     def save_settings(self):
         try:
-            with open('poe_settings.json', 'w') as f:
+            update_checker.ensure_app_data_dir()
+            settings_file = os.path.join(update_checker.APP_DATA_DIR, 'poe_settings.json')
+            with open(settings_file, 'w') as f:
                 json.dump(self.settings, f)
         except Exception as e:
             print(f"Error saving settings: {e}")
@@ -600,42 +606,30 @@ class CommandHotkeys(QWidget):
         else:
             self.logout_hotkey.set_hotkey("")
 
-    def check_for_updates(self):
-        """Check for updates and display dialog if updates are available"""
-        try:
-            update_thread = threading.Thread(target=self._update_check_thread, daemon=True)
-            update_thread.start()
-        except Exception as e:
-            print(f"Error starting update check thread: {e}")
-    
-    def _update_check_thread(self):
-        try:
-            # Give the main application time to fully initialize
-            time.sleep(1.5)
-            
-            # Check for updates
-            import update_checker
-            has_update = update_checker.show_update_dialog(self)
-            
-            if has_update:
-                # Update accepted, show notification
-                if self.tray_icon.isVisible():
-                    self.tray_icon.showMessage(
-                        "Update Available",
-                        "A new version is being downloaded",
-                        QSystemTrayIcon.Information,
-                        3000
-                    )
-        except Exception as e:
-            print(f"Error checking for updates: {e}")
+def check_single_instance():
+    mutex_name = "Global\\XDDBotSingleInstance"
+    try:
+        mutex = ctypes.windll.kernel32.CreateMutexW(None, 1, mutex_name)
+        if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+            return False
+        return True
+    except:
+        return True
 
 def main():
+    if not check_single_instance():
+        QMessageBox.warning(None, "Already Running", "XDDBot is already running.")
+        return sys.exit(1)
+        
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app_font = QFont("Segoe UI", 9)
     app.setFont(app_font)
     
-    # No longer need to check for Npcap here - launcher handles it
+    update_result = update_checker.check_for_update_at_startup()
+    if update_result == 1:
+        return sys.exit(0)
+    
     window = CommandHotkeys()
     sys.exit(app.exec_())
 
