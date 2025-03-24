@@ -10,12 +10,21 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 import os
 
+APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".xddbot")
+os.makedirs(APP_DATA_DIR, exist_ok=True)
+LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
+
 try:
-    from update_checker import APP_DATA_DIR, ensure_app_data_dir
+    from update_checker import APP_DATA_DIR as UC_APP_DATA_DIR, ensure_app_data_dir
     ensure_app_data_dir()
-    LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
+    if os.path.exists(UC_APP_DATA_DIR):
+        APP_DATA_DIR = UC_APP_DATA_DIR
+        LOG_FILE = os.path.join(APP_DATA_DIR, "poe_logout.log")
 except ImportError:
-    LOG_FILE = "poe_logout.log"
+    pass
+
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
 
 logging.basicConfig(
     level=logging.ERROR,
@@ -83,7 +92,6 @@ class ScapyPacketSender:
         
         def send_packets_chunk(offsets):
             local_sent = 0
-            
             try:
                 if THREAD_PRIORITY_HIGHEST:
                     try:
@@ -96,28 +104,23 @@ class ScapyPacketSender:
                 for offset in offsets:
                     try:
                         seq = (seq_base + offset) % 0xFFFFFFFF
-                        
                         rst_packet = IP(src=conn.local_ip, dst=conn.remote_ip)/TCP(
                             sport=conn.local_port, 
                             dport=conn.remote_port, 
                             seq=seq, 
                             flags="R"
                         )
-                        
                         rst_ack_packet = IP(src=conn.local_ip, dst=conn.remote_ip)/TCP(
                             sport=conn.local_port, 
                             dport=conn.remote_port, 
                             seq=seq, 
                             flags="RA"
                         )
-                        
                         send(rst_packet, verbose=0)
                         send(rst_ack_packet, verbose=0)
-                        
                         local_sent += 2
                     except:
                         pass
-                
                 with results_lock:
                     thread_results.append(local_sent)
             except:
@@ -180,21 +183,17 @@ class ConnectionMonitor:
                                 ))
             except:
                 continue
-        
         return connections
     
     def _scan_connections(self):
         prev_connections = set()
-        
         while not self.stop_event.is_set():
             try:
                 current_connections = set()
                 for conn in self.get_poe_connections():
                     current_connections.add(conn.id)
-                    
                     if conn.id not in self.monitored_connections:
                         self.monitored_connections.add(conn.id)
-                        
                         monitor_thread = threading.Thread(
                             target=self._monitor_connection, 
                             args=(conn,),
@@ -244,11 +243,9 @@ class PoELogoutTool:
         self.running = True
         self.active_attack = False
         self.last_active_time = 0
-        
         self.seq_tracker = SequenceTracker()
         self.packet_sender = ScapyPacketSender(num_threads=packet_threads)
         self.connection_monitor = ConnectionMonitor(game_port, self.seq_tracker)
-        
         self.router_mac = None
         self.router_ip = None
         self.local_iface = None
@@ -261,7 +258,6 @@ class PoELogoutTool:
                 self.use_layer2 = True
         except:
             pass
-            
         self.connection_monitor.start()
         threading.Thread(target=self._state_watchdog, daemon=True).start()
     
@@ -281,28 +277,20 @@ class PoELogoutTool:
                 keyboard.unhook_all()
             except:
                 pass
-                
             keyboard.add_hotkey(self.hotkey, self.perform_logout, suppress=False)
-            
             if not any(self.hotkey in k for k in keyboard._hotkeys.keys()):
                 keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
-                
             return True
         except Exception as e:
-            print(f"Hotkey registration error: {str(e)}")
-            
             try:
-                print(f"Trying alternative keyboard hook for {self.hotkey}...")
                 keyboard.on_press_key(self.hotkey, lambda _: self.perform_logout())
                 return True
-            except Exception as e2:
-                print(f"Alternative hook failed: {str(e2)}")
+            except:
                 return False
     
     def _get_router_mac(self):
         if self.router_mac is not None:
             return self.router_mac
-            
         try:
             gateways = conf.route.routes
             for gateway in gateways:
@@ -324,7 +312,6 @@ class PoELogoutTool:
                 return self.router_mac
         except:
             pass
-        
         return None
         
     def _is_port_open(self, ip, port, timeout=0.5):
@@ -337,19 +324,15 @@ class PoELogoutTool:
     def _send_layer2_packets(self):
         if not self.router_mac:
             return False
-            
         try:
             connections = self.connection_monitor.get_poe_connections()
             if not connections:
                 return False
-                
             target_connections = [conn for conn in connections if conn.remote_port == self.game_port]
             if not target_connections:
                 return False
-                
             for conn in target_connections:
                 sequence_changes = [0, 0, 0, 0, 2, 2, 7, 7, 10, 10, 15, 15]
-                
                 start_time = time.time()
                 attack_duration = 6.0
                 
@@ -362,7 +345,6 @@ class PoELogoutTool:
                     
                     for seq_change in sequence_changes:
                         current_seq = (seq + seq_change) % 0xFFFFFFFF
-                        
                         rst_packet = Ether(dst=self.router_mac) / IP(src=conn.local_ip, dst=conn.remote_ip) / TCP(
                             sport=conn.local_port, 
                             dport=conn.remote_port, 
@@ -370,7 +352,6 @@ class PoELogoutTool:
                             flags="R",
                             window=0
                         )
-                        
                         rst_ack_packet = Ether(dst=self.router_mac) / IP(src=conn.local_ip, dst=conn.remote_ip) / TCP(
                             sport=conn.local_port, 
                             dport=conn.remote_port, 
@@ -378,17 +359,15 @@ class PoELogoutTool:
                             flags="RA",
                             window=0
                         )
-                        
                         sendp(rst_packet, iface=self.local_iface, verbose=0)
                         sendp(rst_ack_packet, iface=self.local_iface, verbose=0)
-                        
                         sent_count += 2
                     
                     port_open = self._is_port_open(conn.remote_ip, conn.remote_port, timeout=0.3)
                     if not port_open:
                         self.is_active = False
                         return True
-                        
+                    
                     active_connections = self.connection_monitor.get_poe_connections()
                     if not any(c.remote_port == self.game_port for c in active_connections):
                         self.is_active = False
@@ -397,7 +376,6 @@ class PoELogoutTool:
                     time.sleep(0.03)
                 
                 self.is_active = False
-            
             return True
         except:
             self.is_active = False
@@ -437,7 +415,6 @@ class PoELogoutTool:
                     ).start()
                 
                 threading.Thread(target=self._reset_active_state, daemon=True).start()
-            
         except:
             self.is_active = False
     
@@ -471,27 +448,19 @@ tool_instance = None
 def init_logout_tool(hotkey='f9', game_port=6112, packet_threads=4):
     global tool_instance
     try:
-        print("Initializing PoE Logout Tool...")
         tool_instance = PoELogoutTool(hotkey, game_port, packet_threads)
         tool_instance.start()
         return True
-    except Exception as e:
-        print(f"Failed to initialize tool: {e}")
+    except:
         return False
 
 def register_logout_hotkey():
     global tool_instance
     if not tool_instance:
-        print("Cannot register hotkey: Tool not initialized")
         return False
     try:
-        print(f"Registering hotkey '{tool_instance.hotkey}'...")
-        result = tool_instance.register_hotkey()
-        if result:
-            print(f"Successfully registered hotkey '{tool_instance.hotkey}'")
-        return result
-    except Exception as e:
-        print(f"Error registering hotkey: {e}")
+        return tool_instance.register_hotkey()
+    except:
         return False
 
 def perform_logout():
@@ -533,22 +502,16 @@ def shutdown_logout_tool():
 if __name__ == '__main__':
     try:
         import argparse
-        
         parser = argparse.ArgumentParser(description='Path of Exile Logout Tool')
         parser.add_argument('--hotkey', type=str, default='f9', help='Custom hotkey to use')
         parser.add_argument('--port', type=int, default=6112, help='PoE server port (default: 6112)')
         parser.add_argument('--threads', type=int, default=4, help='Number of parallel threads for packet sending')
         args = parser.parse_args()
         
-        print("Starting PoE Logout Tool...")
         if init_logout_tool(hotkey=args.hotkey, game_port=args.port, packet_threads=args.threads):
-            print(f"Tool initialized with port {args.port} and {args.threads} threads")
             if register_logout_hotkey():
-                print(f"PoE Logout Tool started - Press {args.hotkey} to logout")
+                pass
             else:
-                print(f"WARNING: Hotkey registration failed. Starting without hotkey support.")
-                print(f"You can still use the tool by pressing Ctrl+C to exit when needed.")
-                
                 def manual_check():
                     while True:
                         try:
@@ -558,32 +521,24 @@ if __name__ == '__main__':
                             time.sleep(0.1)
                         except:
                             time.sleep(0.5)
-                            
                 threading.Thread(target=manual_check, daemon=True).start()
             
             try:
-                print("Tool running. Press Ctrl+C to exit...")
                 while True:
                     time.sleep(1)
                     if not tool_instance or not tool_instance.running:
-                        print("Tool instance lost - reinitializing")
                         init_logout_tool(hotkey=args.hotkey, game_port=args.port, packet_threads=args.threads)
                         register_logout_hotkey()
                     
                     if hasattr(keyboard, '_hotkeys') and not any(args.hotkey in k for k in keyboard._hotkeys.keys()):
-                        print("Hotkey registration lost - reregistering")
                         register_logout_hotkey()
             except KeyboardInterrupt:
-                print("Shutting down...")
+                pass
             finally:
-                print("Cleaning up...")
                 shutdown_logout_tool()
-                print("Done!")
         else:
-            print("Failed to initialize tool - exiting")
             sys.exit(1)
     except Exception as e:
-        print(f"CRITICAL ERROR: {str(e)}")
         with open("logout_critical_error.txt", "w") as f:
             f.write(f"CRITICAL ERROR: {str(e)}\n")
         sys.exit(1)

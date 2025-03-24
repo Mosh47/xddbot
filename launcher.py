@@ -1,58 +1,79 @@
-import sys
 import os
-import subprocess
-from PyQt5.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
-from PyQt5.QtGui import QFont, QIcon
-from PyQt5.QtCore import Qt
+import sys
+import npcap_detector
+from PyQt5.QtWidgets import QApplication, QMessageBox, QVBoxLayout, QLabel, QPushButton, QDialog
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
+
+def launch_main_app():
+    try:
+        import poe_commands
+        poe_commands.main()
+    except Exception as e:
+        print(f"Error launching main app: {e}")
+        QMessageBox.critical(None, "Error", f"Failed to start the application: {e}")
 
 class NpcapRequiredDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("XDDBot - Npcap Required")
-        self.setFixedSize(450, 250)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Npcap Required")
+        self.setFixedWidth(500)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         
-        main_layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         
-        message_layout = QVBoxLayout()
-        
-        message_label = QLabel(
-            "XDDBot requires Npcap to be installed to function properly.\n\n"
-            "Npcap is a packet capture library that allows the app to detect\n"
-            "and terminate network connections for the logout function.\n\n"
-            "Click the button below to download and install Npcap, then restart\n"
-            "XDDBot after installation is complete."
+        # Main message
+        message = QLabel(
+            "<h3>Npcap is required to run this application</h3>"
+            "<p>PoE Tools needs Npcap to enable the logout functionality.</p>"
+            "<p>Please download and install Npcap with default settings:</p>"
+            "<ol>"
+            "<li>Click the download button below</li>"
+            "<li>Run the downloaded installer</li>"
+            "<li>Click 'Next' at each step (accept the DEFAULT options)</li>"
+            "<li>Click 'Finish' to complete installation</li>"
+            "<li>Restart Logout Bot AFTER installation is complete</li>"
+            "</ol>"
         )
-        message_label.setAlignment(Qt.AlignCenter)
-        message_layout.addWidget(message_label)
+        message.setTextFormat(Qt.RichText)
+        message.setWordWrap(True)
+        layout.addWidget(message)
         
-        main_layout.addLayout(message_layout)
+        # Download button
+        download_btn = QPushButton("Download Npcap")
+        download_btn.setMinimumHeight(40)
+        download_btn.clicked.connect(self.download_npcap)
+        layout.addWidget(download_btn)
         
-        button_layout = QHBoxLayout()
+        # Exit button
+        exit_btn = QPushButton("Exit")
+        exit_btn.clicked.connect(self.reject)
+        layout.addWidget(exit_btn)
         
-        download_button = QPushButton("Download & Install Npcap")
-        download_button.clicked.connect(self.download_npcap)
-        download_button.setFixedHeight(40)
-        button_layout.addWidget(download_button)
-        
-        exit_button = QPushButton("Exit")
-        exit_button.clicked.connect(self.close)
-        exit_button.setFixedHeight(40)
-        button_layout.addWidget(exit_button)
-        
-        main_layout.addLayout(button_layout)
-        
-        self.setLayout(main_layout)
+        self.setLayout(layout)
     
     def download_npcap(self):
-        subprocess.Popen(["cmd", "/c", "start", "https://npcap.com/#download"])
+        QDesktopServices.openUrl(QUrl("https://npcap.com/dist/npcap-1.81.exe"))
 
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
     
-    if os.path.exists("C:\\Windows\\System32\\Npcap") or os.path.exists("C:\\Program Files\\Npcap"):
-        subprocess.Popen([sys.executable, "poe_commands.py"])
-        sys.exit(0)
+    # Check if we're being called as the main app
+    if len(sys.argv) > 1 and sys.argv[1] == "--main":
+        import poe_commands
+        return poe_commands.main()
     
+    # If Npcap is already installed, just launch the main app
+    if npcap_detector.is_npcap_installed():
+        launch_main_app()
+        return
+    
+    # Show Npcap required dialog
     dialog = NpcapRequiredDialog()
-    dialog.exec_()
-    sys.exit(0) 
+    dialog.exec_()  # This will block until user closes the dialog
+    
+    # No need to continue running the app
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main() 

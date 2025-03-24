@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 import json
 import keyboard
@@ -394,6 +394,10 @@ class CommandHotkeys(QWidget):
         show_action.triggered.connect(self.show)
         tray_menu.addAction(show_action)
         
+        update_action = QAction("Check for Updates", self)
+        update_action.triggered.connect(self.check_for_updates_action)
+        tray_menu.addAction(update_action)
+        
         quit_action = QAction("Exit", self)
         quit_action.triggered.connect(self.close_application)
         tray_menu.addAction(quit_action)
@@ -401,6 +405,19 @@ class CommandHotkeys(QWidget):
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self.tray_icon_activated)
         self.tray_icon.show()
+
+    def check_for_updates_action(self):
+        try:
+            import update_checker
+            # Force reset version to check for any update
+            result = update_checker.force_update_check()
+            if result == 0:
+                QMessageBox.information(self, "Updates", "No new updates available.")
+            elif result == 2:
+                # Update was skipped, do nothing or show different message
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not check for updates: {str(e)}")
     
     def create_icon_pixmap(self):
         pixmap = QPixmap(64, 64)
@@ -524,9 +541,7 @@ class CommandHotkeys(QWidget):
     def start_logout_script(self):
         try:
             hotkey = self.settings['logout']['hotkey']
-            success = logout.init_logout_tool(
-                hotkey=hotkey
-            )
+            success = logout.init_logout_tool(hotkey=hotkey)
             
             if success:
                 hotkey_registered = logout.register_logout_hotkey()
@@ -609,7 +624,7 @@ def check_single_instance():
     mutex_name = "Global\\XDDBotSingleInstance"
     try:
         mutex = ctypes.windll.kernel32.CreateMutexW(None, 1, mutex_name)
-        if ctypes.windll.kernel32.GetLastError() == 183:
+        if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
             return False
         return True
     except:
