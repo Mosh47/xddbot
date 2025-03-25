@@ -17,7 +17,7 @@ try:
     import update_checker
 except ImportError as e:
     print(f"Failed to import module: {e}")
-from ui_components import KeyCaptureWidget, CommandUI, CommandRowCreator
+from ui import KeyCaptureWidget, CommandUI, CommandRowCreator
 from hotkey_manager import HotkeyManager
 from input_utils import check_single_instance, press_and_release, type_string, VK_RETURN, INPUT, INPUT_union, KEYBDINPUT, KEYEVENTF_KEYUP, INPUT_KEYBOARD
 
