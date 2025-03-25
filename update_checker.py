@@ -380,11 +380,11 @@ def check_for_update_at_startup():
         result = dialog.exec_()
         
         if result == QDialog.Accepted:
-            return 1  # Update installed
+            return 1
         else:
-            return 2  # Update skipped
+            return 2
     
-    return 0  # No update available
+    return 0
 
 def reset_version_info():
     ensure_app_data_dir()
@@ -396,7 +396,7 @@ def reset_version_info():
 def force_update_check():
     """Force check for updates by resetting version info first"""
     print("Forcing update check...")
-    reset_version_info()  # Reset to version 0.0.0
+    reset_version_info()
     return check_for_update_at_startup()
 
 def check_for_update_background():
@@ -409,25 +409,20 @@ def check_for_update_background():
                 if not app:
                     return
                 
-                # Use the main thread for showing the dialog
                 def show_dialog():
                     dialog = UpdateDialog(latest_version, download_url)
                     result = dialog.exec_()
-                    # No need to exit the app here
                 
-                # Schedule the dialog to appear from the main thread
                 from PyQt5.QtCore import QTimer
                 QTimer.singleShot(100, show_dialog)
         except Exception as e:
             print(f"Background update check failed: {e}")
     
-    # Start the check in a background thread
     update_thread = threading.Thread(target=run_check)
     update_thread.daemon = True
     update_thread.start()
-    return 0  # Always return 0 to continue app startup
+    return 0
 
-# Keep only this at the end of update_checker.py 
 ensure_app_data_dir()
 if not os.path.exists(VERSION_FILE):
     save_current_version(DEFAULT_VERSION)

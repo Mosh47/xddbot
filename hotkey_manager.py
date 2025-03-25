@@ -11,8 +11,7 @@ class HotkeyManager:
         self.execute_callback = execute_callback or self.execute_command
         self.last_executed = {}
         self.last_execution_time = 0
-        self.execution_cooldown = 0.1  # 100ms cooldown between executions
-        
+        self.execution_cooldown = 0.1          
     def set_whisper_settings(self, whisper_settings):
         self.whisper_settings = whisper_settings
         
@@ -123,7 +122,6 @@ class HotkeyManager:
             
     def set_show_settings_callback(self, callback):
         self.show_settings_callback = callback
-        # Only register F10 hotkey without suppressing it
         keyboard.add_hotkey('f10', callback, suppress=False)
         
     def update_settings(self, new_settings, new_whisper_settings=None):

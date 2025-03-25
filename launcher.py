@@ -22,7 +22,6 @@ class NpcapRequiredDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
-        # Main message
         message = QLabel(
             "<h3>Npcap is required to run this application</h3>"
             "<p>PoE Tools needs Npcap to enable the logout functionality.</p>"
@@ -39,13 +38,11 @@ class NpcapRequiredDialog(QDialog):
         message.setWordWrap(True)
         layout.addWidget(message)
         
-        # Download button
         download_btn = QPushButton("Download Npcap")
         download_btn.setMinimumHeight(40)
         download_btn.clicked.connect(self.download_npcap)
         layout.addWidget(download_btn)
         
-        # Exit button
         exit_btn = QPushButton("Exit")
         exit_btn.clicked.connect(self.reject)
         layout.addWidget(exit_btn)
@@ -58,21 +55,16 @@ class NpcapRequiredDialog(QDialog):
 def main():
     app = QApplication(sys.argv)
     
-    # Check if we're being called as the main app
     if len(sys.argv) > 1 and sys.argv[1] == "--main":
         import main as main_module
         return main_module.main()
     
-    # If Npcap is already installed, just launch the main app
     if npcap_detector.is_npcap_installed():
         launch_main_app()
         return
     
-    # Show Npcap required dialog
     dialog = NpcapRequiredDialog()
-    dialog.exec_()  # This will block until user closes the dialog
-    
-    # No need to continue running the app
+    dialog.exec_()      
     sys.exit(0)
 
 if __name__ == "__main__":

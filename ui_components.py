@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
 from PyQt5.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QTransform, QKeySequence, QBrush, QPen, QPainter
 
-# Ensure QApplication is initialized before any QWidget creation
 _qapp = None
 if QApplication.instance() is None and not hasattr(QApplication, '_in_test'):
     import sys
@@ -29,7 +28,6 @@ class KeyCaptureWidget(QLineEdit):
         self.capturing = False
         self.ignore_next_release = False
         
-        # Make text bold
         font = self.font()
         font.setBold(True)
         self.setFont(font)
@@ -180,7 +178,6 @@ class CommandRowCreator:
             text_input.setEnabled(False)
         text_input.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
-        # Make text bold
         font = text_input.font()
         font.setBold(True)
         text_input.setFont(font)
@@ -248,7 +245,6 @@ class CommandRowCreator:
         hotkey_layout.addWidget(clear_button)
         row_layout.addLayout(hotkey_layout, 1)
         
-        # Reduce spacing at the end
         row_layout.addSpacing(5)
             
         components['hotkey'] = hotkey_widget
@@ -270,7 +266,6 @@ class CommandRowCreator:
             text_input.setEnabled(False)
         text_input.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
-        # Make text bold
         font = text_input.font()
         font.setBold(True)
         text_input.setFont(font)
@@ -289,7 +284,7 @@ class CommandRowCreator:
         """)
             
         hotkey_widget = KeyCaptureWidget(cmd_settings['hotkey'])
-        hotkey_widget.setFixedWidth(120)  # Match logout width for consistency
+        hotkey_widget.setFixedWidth(120)
         hotkey_widget.setStyleSheet("""
             KeyCaptureWidget {
                 border: 1px solid #555555;
@@ -338,7 +333,6 @@ class CommandRowCreator:
         hotkey_layout.addWidget(clear_button)
         row_layout.addLayout(hotkey_layout, 1)
         
-        # Reduce spacing at the end
         row_layout.addSpacing(5)
             
         components['text'] = text_input
@@ -357,7 +351,6 @@ class CustomTitleBar(QWidget):
         self.oldPos = None
         self.close_callback = close_callback or (lambda: None)
         
-        # Add a dark background
         self.setStyleSheet("""
             #titleBar {
                 background-color: #1c1c1c;
@@ -380,20 +373,17 @@ class CustomTitleBar(QWidget):
             }
         """)
         
-        # Make the title bar handle mouse events for dragging
         self.setMouseTracking(True)
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 10, 0)
         
-        # Set up app title with proper styling
         self.title_label = QLabel(title)
         self.title_label.setObjectName("titleLabel")
         layout.addWidget(self.title_label)
         
         layout.addStretch()
         
-        # Close button with proper styling
         self.close_button = QPushButton("✕")
         self.close_button.setObjectName("closeButton")
         self.close_button.setFixedSize(30, 26)
@@ -406,9 +396,7 @@ class CustomTitleBar(QWidget):
 
     def mouseMoveEvent(self, event):
         if self.oldPos and event.buttons() & Qt.LeftButton:
-            # Find the actual top-level window to move
             toplevel = self.window()
-            # Move the top-level window instead of direct parent
             delta = QPoint(event.globalPos() - self.oldPos)
             toplevel.move(toplevel.pos() + delta)
             self.oldPos = event.globalPos()
@@ -420,7 +408,6 @@ class CollapsibleSection(QWidget):
     def __init__(self, title, parent=None):
         super(CollapsibleSection, self).__init__(parent)
         
-        # Style sheet for the toggle button
         self.button_stylesheet = """
             QPushButton {
                 text-align: left;
@@ -435,42 +422,34 @@ class CollapsibleSection(QWidget):
             }
         """
         
-        # Main layout
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         
-        # Header with toggle button
         self.toggle_button = QPushButton(title)
         self.toggle_button.setStyleSheet(self.button_stylesheet)
         self.toggle_button.setCheckable(True)
         self.toggle_button.setChecked(False)
         self.toggle_button.clicked.connect(self.toggle_section)
         
-        # Add arrow indicator
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
         button_layout.addWidget(self.toggle_button)
         
-        # Content area widget
         self.content_area = QWidget()
         self.content_area.setVisible(False)
         
-        # Content layout to hold added widgets
         self.content_layout = QVBoxLayout(self.content_area)
-        self.content_layout.setContentsMargins(0, 1, 0, 1)  # Very compact margins
-        self.content_layout.setSpacing(2)  # Minimal spacing between widgets
+        self.content_layout.setContentsMargins(0, 1, 0, 1)
+        self.content_layout.setSpacing(2)
         
-        # Add to main layout
         self.main_layout.addLayout(button_layout)
         self.main_layout.addWidget(self.content_area)
         
-        # Add button container for adding new rows
         self.add_button_container = QWidget()
         self.add_button_layout = QHBoxLayout(self.add_button_container)
         self.add_button_layout.setContentsMargins(0, 1, 0, 1)
         
-        # Center the add button
         self.add_button_layout.addStretch()
         self.add_row_button = QPushButton("+")
         self.add_row_button.setFixedSize(24, 24)
@@ -488,18 +467,14 @@ class CollapsibleSection(QWidget):
         self.add_button_layout.addWidget(self.add_row_button)
         self.add_button_layout.addStretch()
         
-        # Add to content layout and hide initially
         self.content_layout.addWidget(self.add_button_container)
         self.add_button_container.setVisible(False)
         
     def toggle_section(self):
-        # Toggle visibility of content area
         self.content_area.setVisible(not self.content_area.isVisible())
         
-        # Update add button visibility - only show when section is expanded
         self.add_button_container.setVisible(self.content_area.isVisible())
         
-        # Update the button style based on expanded/collapsed state
         font = self.toggle_button.font()
         if self.content_area.isVisible():
             self.toggle_button.setText("▼ " + self.toggle_button.text().replace("▶ ", ""))
@@ -508,14 +483,10 @@ class CollapsibleSection(QWidget):
         self.toggle_button.setFont(font)
         
     def add_widget(self, widget):
-        # Set compact margins for added widgets
-        # Insert before the add button (which is the last widget)
         self.content_layout.insertWidget(self.content_layout.count() - 1, widget)
     
     def add_layout(self, layout):
-        # Set more compact spacing for the layout
         layout.setSpacing(2)
-        # Insert before the add button container
         self.content_layout.insertLayout(self.content_layout.count() - 1, layout)
 
 class LogoutIndicator(QFrame):
@@ -525,7 +496,7 @@ class LogoutIndicator(QFrame):
         self.hotkey = logout_settings['hotkey']
         self.text = logout_settings['text']
         
-        self.setFixedHeight(36)  # Slightly taller to accommodate buttons
+        self.setFixedHeight(36)
         
         self.setStyleSheet("""
             #logoutIndicator {
@@ -542,7 +513,6 @@ class LogoutIndicator(QFrame):
         self.layout.setContentsMargins(8, 0, 8, 0)
         self.layout.setSpacing(5)
         
-        # Left side
         left_layout = QHBoxLayout()
         left_layout.setSpacing(5)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -566,10 +536,10 @@ class LogoutIndicator(QFrame):
                 border-bottom: 2px solid #8b0000;
             }
         """)
-        self.key_box.setFixedWidth(120)  # Less wide background
+        self.key_box.setFixedWidth(120)
         
         key_layout = QHBoxLayout(self.key_box)
-        key_layout.setContentsMargins(8, 2, 8, 2)  # Slightly reduced padding
+        key_layout.setContentsMargins(8, 2, 8, 2)
         key_layout.setSpacing(0)
         
         self.key_label = QLabel(self.hotkey.upper())
@@ -585,9 +555,8 @@ class LogoutIndicator(QFrame):
         left_layout.addWidget(self.key_box)
         left_layout.addStretch(1)
         
-        self.layout.addLayout(left_layout, 3)  # Give left side more space
+        self.layout.addLayout(left_layout, 3)
 
-        # Right side will be populated by layout
 
 class BaseLayout:
     def __init__(self):
@@ -613,7 +582,6 @@ class CompactAccordionLayout(BaseLayout):
             
             parent.layout().deleteLater()
         
-        # Set the parent widget background to transparent and proper window flags
         parent.setAttribute(Qt.WA_TranslucentBackground)
         parent.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         
@@ -633,14 +601,12 @@ class CompactAccordionLayout(BaseLayout):
         
         content_layout = QVBoxLayout(content_container)
         content_layout.setContentsMargins(10, 10, 10, 10)
-        content_layout.setSpacing(0)  # No spacing
+        content_layout.setSpacing(0)
         
-        # Top bar with logout and buttons
         top_bar = QWidget()
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Initialize logout indicator
         logout_settings = settings.get('logout', {
             'label': 'Logout:',
             'text': 'logout',
@@ -649,30 +615,25 @@ class CompactAccordionLayout(BaseLayout):
         })
         logout_indicator = LogoutIndicator(logout_settings)
         
-        # Add small Apply/Discard buttons
         apply_button = QPushButton("Apply")
         apply_button.setObjectName("applyButton")
-        apply_button.setFixedSize(60, 24)  # Smaller size
+        apply_button.setFixedSize(60, 24)
         apply_button.clicked.connect(callbacks.get("apply_callback", lambda: None))
         
         discard_button = QPushButton("Discard")
         discard_button.setObjectName("discardButton")
-        discard_button.setFixedSize(60, 24)  # Smaller size
+        discard_button.setFixedSize(60, 24)
         discard_button.clicked.connect(callbacks.get("discard_callback", lambda: None))
         
-        # Add buttons to right side
         right_layout = QHBoxLayout()
         right_layout.addStretch(1)
         right_layout.addWidget(discard_button)
         right_layout.addWidget(apply_button)
         
-        # Add the right layout to the logout indicator
-        logout_indicator.layout.addLayout(right_layout, 5)  # Give right side more space
+        logout_indicator.layout.addLayout(right_layout, 5)
         
-        # Add top bar to content layout
         content_layout.addWidget(logout_indicator)
         
-        # Scroll area for commands
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
@@ -681,12 +642,11 @@ class CompactAccordionLayout(BaseLayout):
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(0)  # Zero spacing between sections
+        scroll_layout.setSpacing(0)
         
         commands_section = CollapsibleSection("GAME COMMANDS")
         whispers_section = CollapsibleSection("WHISPER COMMANDS")
         
-        # Connect the add buttons
         commands_section.add_row_button.clicked.connect(callbacks.get("add_command_callback", lambda: None))
         whispers_section.add_row_button.clicked.connect(callbacks.get("add_whisper_callback", lambda: None))
         
@@ -736,22 +696,17 @@ class CompactAccordionLayout(BaseLayout):
         scroll_layout.addWidget(commands_section)
         scroll_layout.addWidget(whispers_section)
         
-        # Do not add stretch so the window only expands to fit content
         scroll_area.setWidget(scroll_content)
         content_layout.addWidget(scroll_area)
         
-        # Add the content container to the main layout
         main_layout.addWidget(content_container, 1)
         
-        # Create a hidden status bar for message display but don't add it to any visible layout
         status_bar = QStatusBar()
         status_bar.setSizeGripEnabled(False)
         status_bar.setStyleSheet("color: white; background: transparent;")
         
-        # Set the layout for the parent widget
         parent.setLayout(main_layout)
         
-        # Adjust minimum size to be smaller since we don't need as much space
         parent.setMinimumSize(600, 300)
         commands_section.toggle_section()
         
@@ -1110,7 +1065,6 @@ class DarkMinimalTheme(BaseTheme):
 class UIBuilder:
     @staticmethod
     def create_app_icon():
-        # Only create the pixmap when the method is actually called
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
@@ -1134,7 +1088,6 @@ class UIBuilder:
     
     @staticmethod
     def create_tab_widget():
-        # This should only be called after QApplication is initialized
         tab_widget = QTabWidget()
         tab_widget.setObjectName("mainTabs")
         tab_widget.setDocumentMode(True)
@@ -1152,12 +1105,10 @@ class CommandUI:
         self.whisper_components = {}
         
     def build_ui(self, settings, whisper_settings, clear_callback, clear_whisper_callback, add_command_callback, add_whisper_callback, delete_command_callback, delete_whisper_callback, discard_callback, apply_callback, hide_callback):
-        container = QWidget(self.parent)  # Ensure parent is passed here
+        container = QWidget(self.parent)
         
-        # Apply the theme stylesheet to the container
         container.setStyleSheet(UIBuilder.setup_default_stylesheet())
         
-        # Use the TabLayout
         layout = TabLayout()
         ui_components, whisper_components, status_bar = layout.build_ui(
             container, 
@@ -1176,12 +1127,10 @@ class CommandUI:
             }
         )
         
-        # Store references for parent to access
         self.ui_components = ui_components
         self.whisper_components = whisper_components
         self.status_bar = status_bar
         
-        # Return the container widget
         return container
 
 def safe_update_geometry(widget):
@@ -1191,28 +1140,22 @@ def safe_update_geometry(widget):
             widget.updateGeometry()
     except (RuntimeError, Exception) as e:
         print(f"Error updating geometry: {e}")
-        # Widget was likely deleted or is invalid
         pass
 
 def create_safe_discard_callback(original_callback):
     """Create a wrapper around discard callback that handles potential UI issues safely"""
     def safe_discard_wrapper(*args, **kwargs):
         try:
-            # Call the original callback - fixed to handle methods properly
-            if hasattr(original_callback, '__self__'):  # This is a bound method
-                # Call with just self, ignoring additional args that Qt might pass
+            if hasattr(original_callback, '__self__'):
                 result = original_callback()
             else:
-                # For normal functions, pass all args
                 result = original_callback(*args, **kwargs)
             return result
         except RuntimeError as e:
             if "has been deleted" in str(e):
                 print(f"Warning: Attempted to access deleted widget: {e}")
-                # Widget was already deleted, nothing more to do
                 pass
             else:
-                # Re-raise other runtime errors
                 raise
     return safe_discard_wrapper
 
@@ -1232,16 +1175,13 @@ class TabLayout(BaseLayout):
             
             parent.layout().deleteLater()
         
-        # Set the parent widget background to transparent and proper window flags
         parent.setAttribute(Qt.WA_TranslucentBackground)
         parent.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         
-        # Use QVBoxLayout for the main layout
         main_layout = QVBoxLayout(parent)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Create a widget to hold everything
         main_widget = QWidget()
         main_widget.setObjectName("mainWidget")
         main_widget.setStyleSheet("""
@@ -1252,12 +1192,10 @@ class TabLayout(BaseLayout):
             }
         """)
         
-        # Create a layout for the main widget
         widget_layout = QVBoxLayout(main_widget)
         widget_layout.setContentsMargins(10, 10, 10, 10)
         widget_layout.setSpacing(10)
         
-        # Initialize logout indicator with editable hotkey
         logout_settings = settings.get('logout', {
             'label': 'Logout:',
             'text': 'logout',
@@ -1266,7 +1204,6 @@ class TabLayout(BaseLayout):
         })
         logout_indicator = LogoutIndicator(logout_settings)
         
-        # Create tab widget
         tab_widget = QTabWidget()
         tab_widget.setObjectName("mainTabs")
         tab_widget.setStyleSheet("""
@@ -1305,7 +1242,6 @@ class TabLayout(BaseLayout):
             }
         """)
         
-        # Create scroll area for game commands
         game_content = QWidget()
         game_layout = QVBoxLayout(game_content)
         game_layout.setContentsMargins(10, 10, 10, 10)
@@ -1336,7 +1272,6 @@ class TabLayout(BaseLayout):
             }
         """)
         
-        # Create scroll area for whisper commands
         whisper_content = QWidget()
         whisper_layout = QVBoxLayout(whisper_content)
         whisper_layout.setContentsMargins(10, 10, 10, 10)
@@ -1367,15 +1302,13 @@ class TabLayout(BaseLayout):
             }
         """)
         
-        # Add tabs to the tab widget
         tab_widget.addTab(game_scroll, "GAME COMMANDS")
         tab_widget.addTab(whisper_scroll, "WHISPER COMMANDS")
         
-        # Add footer widget with buttons
         footer = QWidget()
         footer.setObjectName("footer")
         footer.setFixedHeight(60)
-        footer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Ensure footer stays fixed height
+        footer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         footer.setStyleSheet("""
             #footer {
                 background-color: #1c1c1c;
@@ -1391,7 +1324,6 @@ class TabLayout(BaseLayout):
         discard_button.setObjectName("discardButton")
         discard_button.setFixedSize(100, 30)
         
-        # CRITICAL FIX: Wrap the discard callback with our safe wrapper to prevent crashes
         original_discard_callback = callbacks.get("discard_callback", lambda: None)
         safe_discard_callback = create_safe_discard_callback(original_discard_callback)
         discard_button.clicked.connect(safe_discard_callback)
@@ -1405,30 +1337,23 @@ class TabLayout(BaseLayout):
         footer_layout.addSpacing(10)
         footer_layout.addWidget(apply_button)
         
-        # Add components to the main widget layout
         widget_layout.addWidget(logout_indicator)
-        widget_layout.addWidget(tab_widget, 1)  # Tab widget expands
+        widget_layout.addWidget(tab_widget, 1)
         
-        # CRITICAL FIX: Add components directly to main_layout instead of nesting in container
-        # This ensures the footer doesn't get pushed out when content is small
-        main_layout.addWidget(main_widget, 1)  # Main widget expands
-        main_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Ensure main widget expands to fill space
-        main_layout.addWidget(footer)  # Footer is now directly in main_layout, not in container
+        main_layout.addWidget(main_widget, 1)
+        main_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout.addWidget(footer)
         
-        # Prevent automatic resizing that might hide the footer
         parent.layout().setSizeConstraint(QLayout.SetMinimumSize)
 
-        # Set minimum height to ensure footer is always visible
         parent.setMinimumHeight(400)
         
-        # Initialize UI components dictionaries
         ui_components = {}
         whisper_components = {}
         
-        # Helper function to sort command keys numerically
         def sort_command_keys(cmd_id):
             if cmd_id == 'logout':
-                return -1  # Always put logout first
+                return -1
             try:
                 if cmd_id.startswith('command'):
                     return int(cmd_id.replace('command', ''))
@@ -1438,7 +1363,6 @@ class TabLayout(BaseLayout):
             except ValueError:
                 return 0
         
-        # Add game commands to the game tab
         for key in sorted([k for k in settings.keys() if k != 'logout'], key=sort_command_keys):
             command = settings[key]
             row_layout, components = CommandRowCreator.create_command_row(
@@ -1457,7 +1381,6 @@ class TabLayout(BaseLayout):
             game_layout.addWidget(row_container)
             ui_components[key] = components
         
-        # Handle logout separately
         if 'logout' in settings:
             row_layout, components = CommandRowCreator.create_command_row(
                 'logout', 
@@ -1466,7 +1389,6 @@ class TabLayout(BaseLayout):
             )
             ui_components['logout'] = components
             
-        # Add + button container for game commands
         game_add_container = QWidget()
         game_add_layout = QHBoxLayout(game_add_container)
         game_add_layout.setContentsMargins(5, 5, 5, 5)
@@ -1542,7 +1464,6 @@ class TabLayout(BaseLayout):
         game_layout.addWidget(game_add_container)
         game_layout.addStretch()
         
-        # Add whisper commands to the whisper tab
         for key in sorted(whisper_settings.keys(), key=sort_command_keys):
             whisper = whisper_settings[key]
             row_layout, components = CommandRowCreator.create_whisper_row(
@@ -1561,7 +1482,6 @@ class TabLayout(BaseLayout):
             whisper_layout.addWidget(row_container)
             whisper_components[key] = components
             
-        # Add + button container for whispers
         whisper_add_container = QWidget()
         whisper_add_layout = QHBoxLayout(whisper_add_container)
         whisper_add_layout.setContentsMargins(5, 5, 5, 5)
@@ -1637,16 +1557,13 @@ class TabLayout(BaseLayout):
         whisper_layout.addWidget(whisper_add_container)
         whisper_layout.addStretch()
         
-        # Create status bar
         status_bar = QStatusBar()
         status_bar.setSizeGripEnabled(False)
         status_bar.setFixedHeight(30)
         status_bar.setStyleSheet("color: white; background: #2c2c2c; border-top: 1px solid #3a3a3a;")
         
-        # Set minimum size for the window
         parent.setMinimumSize(650, 530)
         
-        # Store references for parent to access
         parent.findChild = lambda x, name=None: {
             QTabWidget: tab_widget,
             "game_layout": game_layout,

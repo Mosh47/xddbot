@@ -2,12 +2,10 @@ import ctypes
 import time
 from ctypes import wintypes
 
-# Constants
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 VK_RETURN = 0x0D
 
-# Windows input structures
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = [("dx", wintypes.LONG),
                 ("dy", wintypes.LONG),
@@ -37,30 +35,24 @@ class INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD),
                 ("union", INPUT_union)]
 
-# Pre-compute all possible key codes at startup
 KEY_CODE_CACHE = {}
 for char in range(256):
     try:
         vk = ctypes.windll.user32.VkKeyScanW(chr(char))
         KEY_CODE_CACHE[char] = vk & 0xFF
     except:
-        KEY_CODE_CACHE[char] = 0  # Default to 0 for unsupported characters
+        KEY_CODE_CACHE[char] = 0
 
-# Reuse the same extra pointer for all inputs
 EXTRA = ctypes.c_ulong(0)
 EXTRA_PTR = ctypes.pointer(EXTRA)
 
-# Create a pool of pre-allocated input structures for reuse
-# This avoids expensive memory allocations during execution
-INPUT_POOL_SIZE = 128  # Adjust based on expected maximum command length
+INPUT_POOL_SIZE = 128
 INPUT_POOL = []
 for _ in range(INPUT_POOL_SIZE):
     union = INPUT_union()
-    # Initialize with zeroed keyboard input
     union.ki = KEYBDINPUT(0, 0, 0, 0, EXTRA_PTR)
     INPUT_POOL.append(INPUT(INPUT_KEYBOARD, union))
 
-# Virtual key code mapping
 VK_CODE = {
     'backspace': 0x08, 'tab': 0x09, 'clear': 0x0C, 'enter': 0x0D, 'shift': 0x10,
     'ctrl': 0x11, 'alt': 0x12, 'pause': 0x13, 'caps_lock': 0x14, 'esc': 0x1B,
@@ -112,13 +104,11 @@ def type_string(string):
 def get_input_from_pool(index, key_code, up=False):
     """Get a pre-allocated input structure from the pool and configure it for a key press/release"""
     if index >= len(INPUT_POOL):
-        # Expand the pool if needed (shouldn't happen often with proper sizing)
-        for _ in range(32):  # Expand by 32 at a time
+        for _ in range(32):
             union = INPUT_union()
             union.ki = KEYBDINPUT(0, 0, 0, 0, EXTRA_PTR)
             INPUT_POOL.append(INPUT(INPUT_KEYBOARD, union))
     
-    # Use the existing structure, but update the key code and flags
     input_struct = INPUT_POOL[index]
     input_struct.union.ki.wVk = key_code
     input_struct.union.ki.dwFlags = KEYEVENTF_KEYUP if up else 0
@@ -127,8 +117,6 @@ def get_input_from_pool(index, key_code, up=False):
 
 def create_key_input(key_code, up=False):
     """Create a keyboard input event with optimized structure creation"""
-    # This function is kept for backward compatibility but is less efficient
-    # than the pool-based approach
     return INPUT(
         INPUT_KEYBOARD,
         INPUT_union(ki=KEYBDINPUT(key_code, 0, KEYEVENTF_KEYUP if up else 0, 0, EXTRA_PTR))
@@ -143,97 +131,75 @@ def send_batched_input(inputs):
 
 def execute_command_batched(command_text):
     """Execute a command using batched input events with optimized structure reuse"""
-    # Calculate exactly how many inputs we need
-    input_count = 4 + (len(command_text) * 2)  # Enter+Up + (chars * 2) + Enter+Up
+    input_count = 4 + (len(command_text) * 2)
     
-    # Get the array type object for this size
     INPUT_ARRAY_TYPE = INPUT * input_count
     
-    # Create array with pre-allocated structures
     input_array = INPUT_ARRAY_TYPE()
     
-    # Use direct indexing into the array for better performance
     idx = 0
     
-    # Add initial Enter press and release
     input_array[idx] = get_input_from_pool(idx, VK_RETURN, False)
     idx += 1
     input_array[idx] = get_input_from_pool(idx, VK_RETURN, True)
     idx += 1
     
-    # Add command text
     for char in command_text:
         if char == '/':
             key_code = VK_CODE.get('/')
         else:
-            # Use .get() with default to avoid KeyErrors
-            key_code = KEY_CODE_CACHE.get(ord(char.upper()), 0x41)  # Default to 'A' if not found
+            key_code = KEY_CODE_CACHE.get(ord(char.upper()), 0x41)
         
-        # Press key (use pool)
         input_array[idx] = get_input_from_pool(idx, key_code, False)
         idx += 1
         
-        # Release key (use pool)
         input_array[idx] = get_input_from_pool(idx, key_code, True)
         idx += 1
     
-    # Add final Enter press and release
     input_array[idx] = get_input_from_pool(idx, VK_RETURN, False)
     idx += 1
     input_array[idx] = get_input_from_pool(idx, VK_RETURN, True)
     
-    # Send all inputs at once
     ctypes.windll.user32.SendInput(input_count, ctypes.byref(input_array), ctypes.sizeof(INPUT))
 
 def execute_whisper_batched(whisper_text):
     """Execute a whisper using batched input events with optimized structure reuse"""
-    # Calculate exactly how many inputs we need
-    input_count = 4 + (len(whisper_text) * 2) + 2  # Ctrl+Enter combo (4) + (chars * 2) + Enter+Up (2)
+    input_count = 4 + (len(whisper_text) * 2) + 2
     
-    # Get the array type object for this size
     INPUT_ARRAY_TYPE = INPUT * input_count
     
-    # Create array with pre-allocated structures
     input_array = INPUT_ARRAY_TYPE()
     
-    # Use direct indexing into the array for better performance
     idx = 0
     
-    # Add Ctrl+Enter for whisper using structures from the pool
-    input_array[idx] = get_input_from_pool(idx, 0x11, False)  # Ctrl press
+    input_array[idx] = get_input_from_pool(idx, 0x11, False)
     idx += 1
     
-    input_array[idx] = get_input_from_pool(idx, VK_RETURN, False)  # Enter press
+    input_array[idx] = get_input_from_pool(idx, VK_RETURN, False)
     idx += 1
     
-    input_array[idx] = get_input_from_pool(idx, VK_RETURN, True)  # Enter release
+    input_array[idx] = get_input_from_pool(idx, VK_RETURN, True)
     idx += 1
     
-    input_array[idx] = get_input_from_pool(idx, 0x11, True)  # Ctrl release
+    input_array[idx] = get_input_from_pool(idx, 0x11, True)
     idx += 1
     
-    # Add whisper text
     for char in whisper_text:
         if char == '/':
             key_code = VK_CODE.get('/')
         else:
-            # Use .get() with default to avoid KeyErrors
-            key_code = KEY_CODE_CACHE.get(ord(char.upper()), 0x41)  # Default to 'A' if not found
+            key_code = KEY_CODE_CACHE.get(ord(char.upper()), 0x41)
         
-        # Press key (use pool)
         input_array[idx] = get_input_from_pool(idx, key_code, False)
         idx += 1
         
-        # Release key (use pool)
         input_array[idx] = get_input_from_pool(idx, key_code, True)
         idx += 1
     
-    # Add final Enter press and release
     input_array[idx] = get_input_from_pool(idx, VK_RETURN, False)
     idx += 1
     input_array[idx] = get_input_from_pool(idx, VK_RETURN, True)
     
-    # Send all inputs at once
     ctypes.windll.user32.SendInput(input_count, ctypes.byref(input_array), ctypes.sizeof(INPUT))
 
 def check_single_instance():
@@ -241,7 +207,7 @@ def check_single_instance():
     mutex_name = "Global\\XDDBotSingleInstance"
     try:
         mutex = ctypes.windll.kernel32.CreateMutexW(None, 1, mutex_name)
-        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        if ctypes.windll.kernel32.GetLastError() == 183:
             return False
         return True
     except:

@@ -23,13 +23,11 @@ from input_utils import check_single_instance, press_and_release, type_string, V
 
 class CommandHotkeys(QWidget):
     def __init__(self):
-        super().__init__(None)  # Explicitly set parent to None
+        super().__init__(None)
         print("Initializing application...")
-        # Set proper window flags to create a standalone, frameless window
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint) 
         self.setAttribute(Qt.WA_TranslucentBackground)
         
-        # Add variables for window dragging
         self.dragging = False
         self.drag_position = None
         
@@ -91,47 +89,38 @@ class CommandHotkeys(QWidget):
         self.hotkey_manager.set_whisper_settings(self.whisper_settings)
         self.hotkey_manager.set_show_settings_callback(self.show_settings)
         
-        # Startup sequence with delays to ensure proper initialization
         self.startup_timer = QTimer()
         self.startup_timer.setSingleShot(True)
         self.startup_timer.timeout.connect(self.delayed_startup)
-        self.startup_timer.start(200)  # Reduced from 500ms to 200ms for faster startup
+        self.startup_timer.start(200)
         
         self.logout_process = None
         print("Creating tray icon...")
         self.create_tray_icon()
         
-        # Add connection status timer
         self.connection_timer = QTimer()
         self.connection_timer.timeout.connect(self.update_connection_display)
-        self.connection_timer.start(2000)  # Check connection every 2 seconds
+        self.connection_timer.start(2000)
         
-        # Add ping timer
         self.ping_timer = QTimer()
         self.ping_timer.timeout.connect(self.update_ping)
-        self.ping_timer.start(1000)  # Check ping every second
+        self.ping_timer.start(1000)
         
-        # Set appropriate size policies
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)  # Fixed width, expanding height
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         
-        # Set fixed width and minimum height
         self.setMinimumSize(800, 400)
-        self.setMaximumWidth(800)  # Fixed width
+        self.setMaximumWidth(800)
         
         self.hide()
     def register_all_commands(self):
-        # Faster startup by reducing delay
         QTimer.singleShot(200, lambda: self._do_register_commands())
         
     def _do_register_commands(self):
-        # Actual registration after delay
         try:
             print("Registering commands...")
             
-            # First clear any existing hotkeys
             self.hotkey_manager.clear_all_hotkeys()
             
-            # Log commands being registered
             for cmd_id, cmd_data in self.settings.items():
                 if cmd_data.get('hotkey'):
                     print(f"  Command {cmd_id}: '{cmd_data.get('text', '')}' with hotkey '{cmd_data.get('hotkey')}'")
@@ -140,7 +129,6 @@ class CommandHotkeys(QWidget):
                 if cmd_data.get('hotkey'):
                     print(f"  Whisper {cmd_id}: '{cmd_data.get('text', '')}' with hotkey '{cmd_data.get('hotkey')}'")
             
-            # Update the hotkey manager with the current settings
             self.hotkey_manager.update_settings(self.settings, self.whisper_settings)
             
             print("Commands registered successfully")
@@ -152,7 +140,6 @@ class CommandHotkeys(QWidget):
     def init_ui(self):
         self.setWindowTitle('XDDBot')
         
-        # Create main container
         main_container = QWidget()
         main_container.setObjectName("mainContainer")
         main_container.setStyleSheet("""
@@ -163,10 +150,9 @@ class CommandHotkeys(QWidget):
             }
         """)
         
-        # Create title bar
         title_bar = QWidget()
         title_bar.setObjectName("titleBar")
-        title_bar.setFixedHeight(40)  # Make title bar thicker
+        title_bar.setFixedHeight(40)
         title_bar.setStyleSheet("""
             #titleBar {
                 background-color: #121212;
@@ -176,16 +162,13 @@ class CommandHotkeys(QWidget):
             }
         """)
         
-        # Title bar layout
         title_layout = QHBoxLayout(title_bar)
         title_layout.setContentsMargins(15, 0, 15, 0)
-        title_layout.setSpacing(0)  # Reduce spacing
+        title_layout.setSpacing(0)
         
-        # Window title
         title_label = QLabel("XDDBot")
         title_label.setStyleSheet("font-weight: bold; font-size: 14px; background-color: transparent;")
         
-        # Close button
         close_button = QPushButton("×")
         close_button.setObjectName("closeButton")
         close_button.setFixedSize(24, 24)
@@ -208,10 +191,8 @@ class CommandHotkeys(QWidget):
         title_layout.addStretch()
         title_layout.addWidget(close_button)
         
-        # Create the CommandUI instance
         self.command_ui = CommandUI(self)
         
-        # Build the content UI with the accordion layout
         content_container = self.command_ui.build_ui(
             self.settings,
             self.whisper_settings,
@@ -226,36 +207,30 @@ class CommandHotkeys(QWidget):
             self.hide
         )
         
-        # Get the components from the command_ui
         self.ui_components = self.command_ui.ui_components
         self.whisper_components = self.command_ui.whisper_components
         self.status_bar = self.command_ui.status_bar
         
-        # Create main layout
         layout = QVBoxLayout(main_container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(title_bar)
         layout.addWidget(content_container)
         
-        # Main window layout
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.addWidget(main_container)
         
-        # Remove only the mouse handlers from child widgets
         title_bar.mousePressEvent = self.title_bar_mouse_press_event
         title_bar.mouseMoveEvent = self.title_bar_mouse_move_event
         title_bar.mouseReleaseEvent = self.title_bar_mouse_release_event
         
         self.setLayout(main_layout)
         
-        # Set size policies to allow window to grow with content
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         main_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         content_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         
-        # Set minimum size but let window grow as needed
         self.setMinimumSize(650, 500)
         
         self.hide()
@@ -263,20 +238,17 @@ class CommandHotkeys(QWidget):
         row_layout = QHBoxLayout()
         row_layout.setSpacing(5)
         
-        # Create text input for non-logout commands
         if cmd_id != 'logout':
             text_input = QLineEdit(cmd_settings['text'])
             if not cmd_settings.get('is_editable', True):
                 text_input.setEnabled(False)
             row_layout.addWidget(text_input, 3)
         else:
-            # For logout, create a bold red Logout label instead of text input
             logout_label = QLabel("Logout")
             logout_label.setStyleSheet("color: #FF3030; font-weight: bold;")
             row_layout.addWidget(logout_label, 3)
             
         hotkey_widget = KeyCaptureWidget(cmd_settings['hotkey'])
-        # Make the logout hotkey widget wider
         if cmd_id == 'logout':
             hotkey_widget.setFixedWidth(150)
         else:
@@ -293,17 +265,14 @@ class CommandHotkeys(QWidget):
         hotkey_layout.addWidget(clear_button)
         row_layout.addLayout(hotkey_layout, 2)
         
-        # Add consistent spacing for all rows
         row_layout.addSpacing(40)
             
-        # Create the components dictionary
         self.ui_components[cmd_id] = {
             'hotkey': hotkey_widget,
             'clear': clear_button,
             'row_layout': row_layout
         }
         
-        # Add text_input to components for non-logout commands
         if cmd_id != 'logout':
             self.ui_components[cmd_id]['text'] = text_input
         else:
@@ -335,7 +304,6 @@ class CommandHotkeys(QWidget):
         hotkey_layout.addWidget(clear_button)
         row_layout.addLayout(hotkey_layout, 2)
         
-        # Add consistent spacing for all rows
         row_layout.addSpacing(40)
             
         self.whisper_components[cmd_id] = {
@@ -350,62 +318,47 @@ class CommandHotkeys(QWidget):
         if cmd_id in self.settings and cmd_id != 'logout':
             print(f"Deleting command {cmd_id}")
             
-            # Disable UI updates temporarily
             self.setUpdatesEnabled(False)
             
-            # Store current tab index to restore it later
             tab_widget = self.findChild(QTabWidget)
-            current_tab = 0  # Default to Game Commands tab (index 0)
+            current_tab = 0
             if tab_widget:
                 current_tab = tab_widget.currentIndex()
             
-            # First clean up any registered hotkey
             hotkey = self.settings[cmd_id].get('hotkey')
             if hotkey:
-                # Forcibly clear all hotkeys to ensure this one is removed
                 self.hotkey_manager.clear_all_hotkeys()
             
-            # Remove command from settings dict
             del self.settings[cmd_id]
             
-            # Get UI components
             components = self.ui_components.pop(cmd_id, None)
             if components and 'row_layout' in components:
                 row_layout = components['row_layout']
                 
-                # Properly clean up the layout and its widgets
                 if row_layout:
                     while row_layout.count():
                         item = row_layout.takeAt(0)
                         if item.widget():
                             item.widget().deleteLater()
                         elif item.layout():
-                            # Recursively clear nested layouts
                             self._clear_layout(item.layout())
             
-            # Recreate the UI
             self.recreate_ui()
             
-            # Restore tab selection
             tab_widget = self.findChild(QTabWidget)
             if tab_widget:
                 tab_widget.setCurrentIndex(current_tab)
             
-            # Adjust window height based on number of rows
             current_height = self.height()
-            row_height = 40  # Increased row height for better spacing
-            spacing = 8  # Spacing between rows
-            new_height = max(400, current_height - (row_height + spacing))  # Don't go below minimum height
+            row_height = 40
+            spacing = 8
+            new_height = max(400, current_height - (row_height + spacing))
             self.resize(self.width(), new_height)
             
-            # Re-register all commands with the updated settings
-            # but DON'T save to disk - changes should only be saved when user clicks Apply
             QTimer.singleShot(100, lambda: self.hotkey_manager.update_settings(self.settings, self.whisper_settings))
             
-            # Re-enable UI updates
             self.setUpdatesEnabled(True)
             
-            # Process events to ensure UI updates
             QApplication.processEvents()
             
             self.status_bar.showMessage("Command removed. Click Apply to save changes.", 3000)
@@ -428,62 +381,47 @@ class CommandHotkeys(QWidget):
         if cmd_id in self.whisper_settings:
             print(f"Deleting whisper command {cmd_id}")
             
-            # Disable UI updates temporarily
             self.setUpdatesEnabled(False)
             
-            # Store current tab index to restore it later
             tab_widget = self.findChild(QTabWidget)
-            current_tab = 1  # Default to Whisper tab (index 1)
+            current_tab = 1
             if tab_widget:
                 current_tab = tab_widget.currentIndex()
             
-            # First clean up any registered hotkey
             hotkey = self.whisper_settings[cmd_id].get('hotkey')
             if hotkey:
-                # Forcibly clear all hotkeys to ensure this one is removed
                 self.hotkey_manager.clear_all_hotkeys()
             
-            # Remove from settings dict
             del self.whisper_settings[cmd_id]
             
-            # Get UI components
             components = self.whisper_components.pop(cmd_id, None)
             if components and 'row_layout' in components:
                 row_layout = components['row_layout']
                 
-                # Properly clean up the layout and its widgets
                 if row_layout:
                     while row_layout.count():
                         item = row_layout.takeAt(0)
                         if item.widget():
                             item.widget().deleteLater()
                         elif item.layout():
-                            # Recursively clear nested layouts
                             self._clear_layout(item.layout())
             
-            # Recreate the UI
             self.recreate_ui()
             
-            # Restore tab selection
             tab_widget = self.findChild(QTabWidget)
             if tab_widget:
                 tab_widget.setCurrentIndex(current_tab)
             
-            # Adjust window height based on number of rows
             current_height = self.height()
-            row_height = 40  # Increased row height for better spacing
-            spacing = 8  # Spacing between rows
-            new_height = max(400, current_height - (row_height + spacing))  # Don't go below minimum height
+            row_height = 40
+            spacing = 8
+            new_height = max(400, current_height - (row_height + spacing))
             self.resize(self.width(), new_height)
             
-            # Re-register all commands with the updated settings
-            # but DON'T save to disk - changes should only be saved when user clicks Apply
             QTimer.singleShot(100, lambda: self.hotkey_manager.update_settings(self.settings, self.whisper_settings))
             
-            # Re-enable UI updates
             self.setUpdatesEnabled(True)
             
-            # Process events to ensure UI updates
             QApplication.processEvents()
             
             self.status_bar.showMessage("Whisper command removed. Click Apply to save changes.", 3000)
@@ -502,10 +440,8 @@ class CommandHotkeys(QWidget):
             except:
                 return 0
             
-        # Sort commands by number and take the one with the highest number (visually at the bottom)
         last_command = sorted(command_ids, key=get_command_number)[-1]
         self.delete_command(last_command)
-        # Let the user know what happened
         self.status_bar.showMessage(f"Deleted command {last_command}. Click Apply to save changes.", 3000)
     
     def delete_bottom_whisper(self):
@@ -519,22 +455,18 @@ class CommandHotkeys(QWidget):
             except:
                 return 0
             
-        # Sort whispers by number and take the one with the highest number (visually at the bottom)
         last_whisper = sorted(whisper_ids, key=get_whisper_number)[-1]
         self.delete_whisper_command(last_whisper)
-        # Let the user know what happened
         self.status_bar.showMessage(f"Deleted whisper {last_whisper}. Click Apply to save changes.", 3000)
     def add_new_command(self):
-        if len(self.settings) - 1 >= 15:  # -1 to exclude logout
+        if len(self.settings) - 1 >= 15:
             self.status_bar.showMessage("Maximum limit of 15 game commands reached", 3000)
             return
             
-        # Disable UI updates temporarily
         self.setUpdatesEnabled(False)
         
-        # Store current tab index to restore it later
         tab_widget = self.findChild(QTabWidget)
-        current_tab = 0  # Default to Game Commands tab (index 0)
+        current_tab = 0
         if tab_widget:
             current_tab = tab_widget.currentIndex()
         
@@ -545,25 +477,20 @@ class CommandHotkeys(QWidget):
         cmd_id = f'command{next_id}'
         self.settings[cmd_id] = {'label': '', 'text': '', 'hotkey': '', 'is_editable': True}
         
-        # Recreate the UI which will include the new command
         self.recreate_ui()
         
-        # Restore tab selection
         tab_widget = self.findChild(QTabWidget)
         if tab_widget:
             tab_widget.setCurrentIndex(current_tab)
         
-        # Adjust window height based on number of rows
         current_height = self.height()
-        row_height = 40  # Increased row height for better spacing
-        spacing = 8  # Spacing between rows
+        row_height = 40
+        spacing = 8
         new_height = current_height + row_height + spacing
         self.resize(self.width(), new_height)
         
-        # Re-enable UI updates
         self.setUpdatesEnabled(True)
         
-        # Process events to ensure UI updates
         QApplication.processEvents()
         
         self.status_bar.showMessage("Command added. Set text and hotkey, then click Apply.", 3000)
@@ -573,12 +500,10 @@ class CommandHotkeys(QWidget):
             self.status_bar.showMessage("Maximum limit of 15 whisper commands reached", 3000)
             return
             
-        # Disable UI updates temporarily
         self.setUpdatesEnabled(False)
         
-        # Store current tab index to restore it later
         tab_widget = self.findChild(QTabWidget)
-        current_tab = 1  # Default to Whisper tab (index 1)
+        current_tab = 1
         if tab_widget:
             current_tab = tab_widget.currentIndex()
         
@@ -589,25 +514,20 @@ class CommandHotkeys(QWidget):
         cmd_id = f'whisper{next_id}'
         self.whisper_settings[cmd_id] = {'label': '', 'text': '', 'hotkey': '', 'is_editable': True}
         
-        # Recreate the UI which will include the new whisper
         self.recreate_ui()
         
-        # Restore tab selection
         tab_widget = self.findChild(QTabWidget)
         if tab_widget:
             tab_widget.setCurrentIndex(current_tab)
         
-        # Adjust window height based on number of rows
         current_height = self.height()
-        row_height = 40  # Increased row height for better spacing
-        spacing = 8  # Spacing between rows
+        row_height = 40
+        spacing = 8
         new_height = current_height + row_height + spacing
         self.resize(self.width(), new_height)
         
-        # Re-enable UI updates
         self.setUpdatesEnabled(True)
         
-        # Process events to ensure UI updates
         QApplication.processEvents()
         
         self.status_bar.showMessage("Whisper added. Set text and hotkey, then click Apply.", 3000)
@@ -702,7 +622,6 @@ class CommandHotkeys(QWidget):
             update_checker.ensure_app_data_dir()
             settings_file = os.path.join(update_checker.APP_DATA_DIR, 'poe_settings.json')
             
-            # Create a clean copy of settings to save
             save_data = {'commands': {}, 'whispers': {}}
             
             for cmd_id, cmd_data in self.settings.items():
@@ -721,10 +640,8 @@ class CommandHotkeys(QWidget):
                     'is_editable': cmd_data.get('is_editable', True)
                 }
                 
-            # Make sure directory exists before writing
             os.makedirs(os.path.dirname(settings_file), exist_ok=True)
                 
-            # Pretty print the JSON for better readability
             with open(settings_file, 'w') as f:
                 json.dump(save_data, f, indent=4)
                 
@@ -768,12 +685,10 @@ class CommandHotkeys(QWidget):
             self.logout_process = False
         self.start_logout_script()
     def update_logout_script(self):
-        # Ensure we have the latest hotkey before restarting
         logout_components = self.ui_components.get('logout')
         if logout_components and 'hotkey' in logout_components:
             self.settings['logout']['hotkey'] = logout_components['hotkey'].get_hotkey()
         
-        # Now restart the logout script with the updated hotkey
         self.restart_logout_script()
     def save_command(self, cmd_id):
         try:
@@ -792,7 +707,6 @@ class CommandHotkeys(QWidget):
                 
             self.save_settings()
             
-            # Use a timer to delay registration
             QTimer.singleShot(500, lambda: self._do_register_commands())
             self.status_bar.showMessage(f"Command '{cmd_id}' saved successfully", 3000)
         except Exception as e:
@@ -846,13 +760,10 @@ class CommandHotkeys(QWidget):
     def delayed_startup(self):
         print("Performing startup initialization...")
         try:
-            # Register hotkeys immediately
             self._do_register_commands()
             
-            # Start logout script immediately
             self.start_logout_script()
             
-            # Final registration after a minimal delay
             QTimer.singleShot(300, self._final_startup_attempt)
             
             print("Initial startup complete")
@@ -862,7 +773,6 @@ class CommandHotkeys(QWidget):
     def _final_startup_attempt(self):
         print("Performing final hotkey registration...")
         try:
-            # Force clear and re-register all hotkeys
             self.hotkey_manager.register_all_hotkeys()
             print("Final registration complete, hotkeys should be active")
         except Exception as e:
@@ -871,40 +781,30 @@ class CommandHotkeys(QWidget):
         try:
             print("Applying all settings...")
             
-            # Disable UI updates temporarily
             self.setUpdatesEnabled(False)
             
-            # First save all the non-logout commands
             for cmd_id, components in self.ui_components.items():
                 if cmd_id != 'logout':
                     if 'text' in components:
                         self.settings[cmd_id]['text'] = components['text'].text()
                     self.settings[cmd_id]['hotkey'] = components['hotkey'].get_hotkey()
                 else:
-                    # Handle logout separately
                     self.settings[cmd_id]['hotkey'] = components['hotkey'].get_hotkey()
             
-            # Save all the whisper commands
             for cmd_id, components in self.whisper_components.items():
                 self.whisper_settings[cmd_id]['text'] = components['text'].text()
                 self.whisper_settings[cmd_id]['hotkey'] = components['hotkey'].get_hotkey()
             
-            # Make sure to explicitly clear all hotkeys before re-registering
             self.hotkey_manager.clear_all_hotkeys()
             
-            # Save to file
             self.save_settings()
             
-            # Update logout script with new hotkey
             self.update_logout_script()
             
-            # Use a timer to register commands after a short delay
             QTimer.singleShot(100, lambda: self._do_register_commands())
             
-            # Re-enable UI updates
             self.setUpdatesEnabled(True)
             
-            # Show status right away
             self.status_bar.showMessage("All settings applied successfully", 3000)
             print("All settings applied successfully")
         except Exception as e:
@@ -916,37 +816,29 @@ class CommandHotkeys(QWidget):
     def discard_changes(self):
         print("Discarding changes...")
         
-        # Disable UI updates temporarily for better performance
         self.setUpdatesEnabled(False)
         
-        # Clear all hotkeys first
         self.hotkey_manager.clear_all_hotkeys()
         
-        # Save window position to restore it later
         window_pos = self.pos()
         
-        # Store current tab index to restore it later
         tab_widget = self.findChild(QTabWidget)
         current_tab = 0
         if tab_widget:
             current_tab = tab_widget.currentIndex()
         
         try:
-            # Load settings from file
             update_checker.ensure_app_data_dir()
             settings_file = os.path.join(update_checker.APP_DATA_DIR, 'poe_settings.json')
             if os.path.exists(settings_file):
                 with open(settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     
-                    # Make a backup of current UI state
                     current_logout_hotkey = self.settings.get('logout', {}).get('hotkey', 'f9')
                     
-                    # Clear all existing settings
                     self.settings = {}
                     self.whisper_settings = {}
                     
-                    # Restore logout settings
                     self.settings['logout'] = {
                         'label': 'Logout:',
                         'text': 'logout',
@@ -954,10 +846,9 @@ class CommandHotkeys(QWidget):
                         'is_editable': True
                     }
                     
-                    # Load other commands
                     if 'commands' in loaded_settings:
                         for cmd_id, cmd_data in loaded_settings['commands'].items():
-                            if cmd_id != 'logout':  # Skip logout, already added
+                            if cmd_id != 'logout':
                                 self.settings[cmd_id] = {
                                     'label': cmd_data.get('label', ''),
                                     'text': cmd_data.get('text', ''),
@@ -965,7 +856,6 @@ class CommandHotkeys(QWidget):
                                     'is_editable': cmd_data.get('is_editable', True)
                                 }
                     
-                    # Load whispers
                     if 'whispers' in loaded_settings:
                         for cmd_id, cmd_data in loaded_settings['whispers'].items():
                             self.whisper_settings[cmd_id] = {
@@ -986,58 +876,42 @@ class CommandHotkeys(QWidget):
             self.setUpdatesEnabled(True)
             return
             
-        # Recreate the UI with the updated settings
         self.recreate_ui()
         
-        # Adjust window size based on the number of commands
-        # Calculate appropriate height based on command count (similar to add/delete operations)
-        base_height = 400  # Minimum height
-        row_height = 40  # Height per command row
-        spacing = 8  # Spacing between rows
-        command_count = len(self.settings) - 1  # Subtract 1 for logout
+        base_height = 400
+        row_height = 40
+        spacing = 8
+        command_count = len(self.settings) - 1
         whisper_count = len(self.whisper_settings)
         max_count = max(command_count, whisper_count)
         window_height = base_height + (max_count * (row_height + spacing))
         
-        # Resize the window to fit the content properly
         self.resize(self.width(), window_height)
         
-        # Force layout update
         QApplication.processEvents()
         
-        # Restore tab selection - FIXED: Use the new tab widget from the recreated UI
         tab_widget = self.findChild(QTabWidget)
         if tab_widget:
             tab_widget.setCurrentIndex(current_tab)
         
-        # Re-register hotkeys based on reset settings
         QTimer.singleShot(100, lambda: self.hotkey_manager.update_settings(self.settings, self.whisper_settings))
         
-        # Restart logout script with updated settings
         self.update_logout_script()
         
-        # Re-enable UI updates
         self.setUpdatesEnabled(True)
         
-        # Notify user - FIXED: Use the NEW status bar, not the old one that was deleted
-        # during recreate_ui. The old reference would cause a crash.
         self.status_bar.showMessage("Changes discarded. Reverted to saved settings.", 3000)
         print("Changes discarded. Reverted to saved settings.")
 
     def recreate_ui(self):
         """Recreate the UI to reflect updated settings"""
         try:
-            # Clear existing layout first to avoid the "already has a layout" error
             if self.layout():
-                # Store old layout to delete later
                 old_layout = self.layout()
                 
-                # Set layout to None before creating a new one
                 QWidget().setLayout(old_layout)
             
-            # Create new UI components
             self.command_ui = CommandUI(self)
-            # Build the UI, which returns a container widget
             container = self.command_ui.build_ui(
                 self.settings,
                 self.whisper_settings,
@@ -1052,7 +926,6 @@ class CommandHotkeys(QWidget):
                 self.hide
             )
             
-            # Create a main container with a title bar
             main_container = QWidget()
             main_container.setObjectName("mainContainer")
             main_container.setStyleSheet("""
@@ -1063,7 +936,6 @@ class CommandHotkeys(QWidget):
                 }
             """)
             
-            # Create title bar
             title_bar = QWidget()
             title_bar.setObjectName("titleBar")
             title_bar.setFixedHeight(40)
@@ -1076,15 +948,12 @@ class CommandHotkeys(QWidget):
                 }
             """)
             
-            # Title bar layout
             title_layout = QHBoxLayout(title_bar)
             title_layout.setContentsMargins(15, 0, 15, 0)
             
-            # Window title
             title_label = QLabel("XDDBot")
             title_label.setStyleSheet("font-weight: bold; font-size: 14px; background-color: transparent;")
             
-            # Close button
             close_button = QPushButton("×")
             close_button.setObjectName("closeButton")
             close_button.setFixedSize(24, 24)
@@ -1107,30 +976,25 @@ class CommandHotkeys(QWidget):
             title_layout.addStretch()
             title_layout.addWidget(close_button)
             
-            # Layout for main container
             container_layout = QVBoxLayout(main_container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setSpacing(0)
             container_layout.addWidget(title_bar)
             container_layout.addWidget(container)
             
-            # Set up the main layout with the main container
             main_layout = QVBoxLayout()
             main_layout.setContentsMargins(10, 10, 10, 10)
             main_layout.addWidget(main_container)
             self.setLayout(main_layout)
             
-            # Attach the mouse handlers to the title bar
             title_bar.mousePressEvent = self.title_bar_mouse_press_event
             title_bar.mouseMoveEvent = self.title_bar_mouse_move_event
             title_bar.mouseReleaseEvent = self.title_bar_mouse_release_event
             
-            # Get the components from the command_ui
             self.ui_components = self.command_ui.ui_components
             self.whisper_components = self.command_ui.whisper_components
             self.status_bar = self.command_ui.status_bar
             
-            # Update references to UI elements
             self.connection_label = getattr(self.command_ui, 'connection_label', None)
             self.connection_image = getattr(self.command_ui, 'connection_image', None)
             self.ping_label = getattr(self.command_ui, 'ping_label', None)
@@ -1139,7 +1003,6 @@ class CommandHotkeys(QWidget):
             import traceback
             traceback.print_exc()
 
-    # Title bar event handlers
     def title_bar_mouse_press_event(self, event):
         if event.button() == Qt.LeftButton:
             self.dragging = True
@@ -1157,24 +1020,21 @@ class CommandHotkeys(QWidget):
             event.accept()
             
     def show(self):
-        # Position the window in the center of the screen
         screen = QApplication.primaryScreen().geometry()
         size = self.geometry()
         self.move((screen.width() - size.width()) // 2, 
                   (screen.height() - size.height()) // 2)
         
-        # Let the window size naturally based on content
         super().show()
 
     def update_connection_display(self):
         try:
             connection_info = getattr(logout, 'get_connection_info', lambda: None)()
             if connection_info and "->" in connection_info:
-                # Show the image when connected
                 if hasattr(self, 'connection_image') and self.connection_image:
                     self.connection_image.setVisible(True)
                 if hasattr(self, 'connection_label') and self.connection_label:
-                    self.connection_label.setText("")  # Clear the label
+                    self.connection_label.setText("")
             else:
                 if hasattr(self, 'connection_label') and self.connection_label:
                     self.connection_label.setText("")
@@ -1189,12 +1049,9 @@ class CommandHotkeys(QWidget):
     def update_ping(self):
         """Update the ping display with current latency to Path of Exile servers"""
         try:
-            # Make sure ping_label exists
             if not hasattr(self, 'ping_label') or self.ping_label is None:
                 return
             
-            # Use ICMP ping to measure latency to Path of Exile servers
-            # Try multiple servers to get the most accurate reading
             servers = [
                 'login.pathofexile.com',
                 'www.pathofexile.com',
@@ -1204,11 +1061,9 @@ class CommandHotkeys(QWidget):
             min_ping = float('inf')
             for server in servers:
                 try:
-                    # Use ping command with 1 packet and 1 second timeout
                     result = subprocess.run(['ping', '-n', '1', '-w', '1000', server], 
                                          capture_output=True, text=True)
                     
-                    # Extract ping time from output
                     if 'Average = ' in result.stdout:
                         ping_str = result.stdout.split('Average = ')[-1].split('ms')[0].strip()
                         ping = int(ping_str)
@@ -1218,23 +1073,21 @@ class CommandHotkeys(QWidget):
             
             if min_ping != float('inf'):
                 self.ping_label.setText(f"Ping: {min_ping} ms")
-                # Color the ping based on value
                 if min_ping < 100:
-                    self.ping_label.setStyleSheet("color: #00FF00;")  # Green
+                    self.ping_label.setStyleSheet("color: #00FF00;")
                 elif min_ping < 200:
-                    self.ping_label.setStyleSheet("color: #FFFF00;")  # Yellow
+                    self.ping_label.setStyleSheet("color: #FFFF00;")
                 else:
-                    self.ping_label.setStyleSheet("color: #FF0000;")  # Red
+                    self.ping_label.setStyleSheet("color: #FF0000;")
             else:
                 self.ping_label.setText("Ping: -- ms")
-                self.ping_label.setStyleSheet("color: #FF0000;")  # Red
+                self.ping_label.setStyleSheet("color: #FF0000;")
         except Exception as e:
             print(f"Error updating ping: {e}")
-            # Try to safely reset the ping label if possible
             try:
                 if hasattr(self, 'ping_label') and self.ping_label is not None:
                     self.ping_label.setText("Ping: -- ms")
-                    self.ping_label.setStyleSheet("color: #FF0000;")  # Red
+                    self.ping_label.setStyleSheet("color: #FF0000;")
             except:
                 pass
 
@@ -1248,7 +1101,6 @@ def main():
     app_font = QFont("Segoe UI", 9)
     app.setFont(app_font)
     
-    # Apply dark theme to the entire application
     app.setStyleSheet("""
         QWidget {
             background-color: #1c1c1c;
@@ -1263,10 +1115,8 @@ def main():
         }
     """)
     
-    # Original update check approach that blocks until user decides
     update_result = update_checker.check_for_update_at_startup()
     if update_result == 1:
-        # Update is being installed, exit
         return sys.exit(0)
     
     window = CommandHotkeys()
