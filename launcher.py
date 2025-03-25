@@ -7,8 +7,8 @@ from PyQt5.QtGui import QDesktopServices
 
 def launch_main_app():
     try:
-        import poe_commands
-        poe_commands.main()
+        import main
+        main.main()
     except Exception as e:
         print(f"Error launching main app: {e}")
         QMessageBox.critical(None, "Error", f"Failed to start the application: {e}")
@@ -60,8 +60,8 @@ def main():
     
     # Check if we're being called as the main app
     if len(sys.argv) > 1 and sys.argv[1] == "--main":
-        import poe_commands
-        return poe_commands.main()
+        import main as main_module
+        return main_module.main()
     
     # If Npcap is already installed, just launch the main app
     if npcap_detector.is_npcap_installed():

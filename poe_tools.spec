@@ -12,8 +12,12 @@ a = Analysis(
         ('logout.py', '.'),
         ('stashscroll.py', '.'),
         ('npcap_detector.py', '.'),
-        ('poe_commands.py', '.'),
         ('update_checker.py', '.'),
+        ('input_utils.py', '.'),
+        ('ui_components.py', '.'),
+        ('hotkey_manager.py', '.'),
+        ('main.py', '.'),
+        ('Images/*.webp', 'Images'),
     ],
     hiddenimports=[
         'win32api',

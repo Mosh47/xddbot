@@ -85,14 +85,14 @@ def get_latest_release():
         print(f"Requesting releases from {url}")
         
         headers = {"Accept": "application/vnd.github.v3+json"}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=3)
         print(f"Response status code: {response.status_code}")
         
         response.raise_for_status()
         data = response.json()
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
+        print(f"Request failed or timed out: {e}")
         return None
     except Exception as e:
         print(f"Error in get_latest_release: {e}")
@@ -398,6 +398,34 @@ def force_update_check():
     print("Forcing update check...")
     reset_version_info()  # Reset to version 0.0.0
     return check_for_update_at_startup()
+
+def check_for_update_background():
+    """Run update check in a background thread that won't block startup"""
+    def run_check():
+        try:
+            latest_version, download_url = check_for_updates()
+            if (latest_version and download_url):
+                app = QApplication.instance()
+                if not app:
+                    return
+                
+                # Use the main thread for showing the dialog
+                def show_dialog():
+                    dialog = UpdateDialog(latest_version, download_url)
+                    result = dialog.exec_()
+                    # No need to exit the app here
+                
+                # Schedule the dialog to appear from the main thread
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(100, show_dialog)
+        except Exception as e:
+            print(f"Background update check failed: {e}")
+    
+    # Start the check in a background thread
+    update_thread = threading.Thread(target=run_check)
+    update_thread.daemon = True
+    update_thread.start()
+    return 0  # Always return 0 to continue app startup
 
 # Keep only this at the end of update_checker.py 
 ensure_app_data_dir()
